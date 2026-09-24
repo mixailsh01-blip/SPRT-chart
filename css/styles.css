@@ -3542,3 +3542,30 @@ input, select, button, textarea { font-family: inherit; }
 :root[data-theme="light"] .schedule-table thead th.day-weekend { background: #8E2433; }
 :root[data-theme="light"] .schedule-table thead th.day-holiday { background: var(--sprt-red); }
 :root[data-theme="light"] .schedule-table thead th.day-preholiday { background: var(--sprt-cyan); color: var(--sprt-navy); }
+
+/* ===== Читаемость сетки графика =====
+   Раньше ячейки, границы и строки были почти одного цвета и сливались. */
+:root[data-theme="dark"],
+body.dark-theme {
+  --table-border: #1A6283;
+  --table-border-strong: #1E6E92;
+  --grid-zebra: rgba(255, 255, 255, 0.045);
+}
+:root[data-theme="light"] {
+  --grid-zebra: rgba(7, 62, 89, 0.04);
+}
+
+/* Все строки одной высоты — с сменой и без */
+.schedule-table tbody td {
+  height: 42px;
+}
+
+/* Чередование строк: полупрозрачный слой поверх любого фона (будни, выходные, праздники) */
+.schedule-table tbody tr:nth-child(even) td {
+  background-image: linear-gradient(var(--grid-zebra), var(--grid-zebra));
+}
+
+/* Наведённая строка — заметная рамка сверху и снизу */
+.schedule-table tbody tr.row-hover td {
+  box-shadow: inset 0 1px 0 var(--accent-strong), inset 0 -1px 0 var(--accent-strong);
+}
