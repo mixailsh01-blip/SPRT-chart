@@ -1857,12 +1857,29 @@ function renderLineTabs() {
   updateLineToggleUI();
 }
 
+// На десктопе легенда встроена под таблицей: кнопка сворачивает/разворачивает её,
+// выбор запоминается. На мобильных — открывается окном.
+const LEGEND_PREF_KEY = "sprt_legend_visible";
+function readLegendPref() {
+  try {
+    return localStorage.getItem(LEGEND_PREF_KEY) !== "0";
+  } catch (_) {
+    return true;
+  }
+}
+function writeLegendPref(visible) {
+  try {
+    localStorage.setItem(LEGEND_PREF_KEY, visible ? "1" : "0");
+  } catch (_) {}
+}
+
 function setLegendOpen(isOpen) {
   if (!shiftLegendEl) return;
   if (window.innerWidth > 768) {
-    shiftLegendEl.classList.remove("shift-legend-hidden", "shift-legend-modal");
+    shiftLegendEl.classList.remove("shift-legend-modal");
+    shiftLegendEl.classList.toggle("shift-legend-hidden", !isOpen);
     document.body.classList.remove("legend-open");
-    btnLegendToggleEl?.setAttribute("aria-expanded", "true");
+    btnLegendToggleEl?.setAttribute("aria-expanded", String(isOpen));
     shiftLegendBackdropEl?.setAttribute("aria-hidden", "true");
     if (legendKeydownHandler) {
       document.removeEventListener("keydown", legendKeydownHandler);
@@ -1892,7 +1909,7 @@ function setLegendOpen(isOpen) {
 
 function bindTopBarButtons() {
   renderLineTabs();
-  setLegendOpen(window.innerWidth <= 768 ? false : true);
+  setLegendOpen(window.innerWidth <= 768 ? false : readLegendPref());
   updateScheduleStickyOffsets();
 
   // Mobile bottom-sheet controls
@@ -1908,6 +1925,12 @@ function bindTopBarButtons() {
     else closeLineTabsPopover();
   });
   btnLegendToggleEl?.addEventListener("click", () => {
+    if (window.innerWidth > 768) {
+      const visible = shiftLegendEl?.classList.contains("shift-legend-hidden");
+      writeLegendPref(visible);
+      setLegendOpen(visible);
+      return;
+    }
     const isOpen = !document.body.classList.contains("legend-open");
     setLegendOpen(isOpen);
   });
@@ -1920,7 +1943,7 @@ function bindTopBarButtons() {
   window.addEventListener("resize", () => {
     if (window.innerWidth > 768) {
       closeLineTabsPopover();
-      setLegendOpen(true);
+      setLegendOpen(readLegendPref());
     } else {
       setLegendOpen(false);
     }
