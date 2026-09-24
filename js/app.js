@@ -2458,6 +2458,14 @@ async function handleSaveToPyrus() {
     showAppToast(
       `Pyrus: ${LINE_LABELS[currentLine] || currentLine} • создано ${created}, изменено ${edited}, удалено ${deleted}`
     );
+    // Бэкенд сообщает id поля «В телефонии»; если его нет — отметка в Pyrus не записалась
+    const sentTelephony = [...payload.create.task, ...payload.edit.task].some((t) => t.telephony === false);
+    if (sentTelephony && !saveResult.telephonyField) {
+      alert(
+        "Отметка «Не в телефонии» не сохранилась в Pyrus.\n" +
+          "Нужно поле-флажок «В телефонии» в форме «График работы» и опубликованный бэкенд в n8n."
+      );
+    }
     if (Array.isArray(saveResult.errors) && saveResult.errors.length) {
       console.warn("schedule.save errors", saveResult.errors);
       alert(

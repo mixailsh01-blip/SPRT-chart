@@ -9,21 +9,32 @@ const colorState = {
 };
 
 // Красный и зелёный зарезервированы под индикатор телефонии (точка в ячейке),
-// поэтому смены красим только оттенками синего, фиолетового, бирюзового, оранжевого и т.п.
-const SHIFT_HUES = [212, 272, 190, 32, 300, 232, 48, 252, 200, 318, 222, 285];
+// синий сливается с фоном графика. Поэтому смены красим только фиолетовыми, оранжевыми,
+// пурпурными, янтарными и нейтральными оттенками: [оттенок, насыщенность, светлота].
+const SHIFT_PALETTE = [
+  [280, 64, 62], // фиолетовый
+  [28, 85, 56], // оранжевый
+  [315, 60, 62], // пурпурный
+  [45, 85, 52], // янтарный
+  [0, 0, 78], // серебристый (без цвета)
+  [295, 45, 74], // сиреневый
+  [35, 55, 40], // коричневый
+  [330, 55, 72], // розовый
+];
 
-function generateColorForIndex(index, saturation = 64, lightness = 54, isDark = false) {
-  const hue = SHIFT_HUES[index % SHIFT_HUES.length];
-
-  const adjSaturation = isDark ? Math.min(saturation + 6, 76) : saturation;
+function generateColorForIndex(index, _saturation = 64, _lightness = 54, isDark = false) {
+  const [hue, saturation, lightness] = SHIFT_PALETTE[index % SHIFT_PALETTE.length];
+  const adjSaturation = isDark && saturation > 0 ? Math.min(saturation + 6, 76) : saturation;
   const adjLightness = isDark ? Math.min(lightness + 6, 70) : lightness;
 
   return { hue, saturation: adjSaturation, lightness: adjLightness };
 }
 
 function createCSSVariablesForColor(hsl, isDark = false) {
-  const bgOpacity = isDark ? 0.2 : 0.14;
-  const borderOpacity = isDark ? 0.55 : 0.48;
+  // На тёмно-синем фоне полупрозрачный цвет смешивается с синим (оранжевый становился серо-зелёным),
+  // поэтому в тёмной теме заливка плотнее.
+  const bgOpacity = isDark ? 0.55 : 0.2;
+  const borderOpacity = isDark ? 0.9 : 0.6;
 
   return {
     bg: `hsla(${hsl.hue}, ${hsl.saturation}%, ${hsl.lightness}%, ${bgOpacity})`,
