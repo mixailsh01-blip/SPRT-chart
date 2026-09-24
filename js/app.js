@@ -186,6 +186,7 @@ const state = {
     currentLine: "ALL",
     theme: "dark",
     isScheduleCached: false,
+    scheduleLoadError: null, // последняя ошибка загрузки графика (пока показан кэш)
     quickPanelBound: false,
   },
   quickMode: {
@@ -1032,6 +1033,11 @@ function scheduleAutoSave(delayMs = AUTOSAVE_DELAY_MS) {
 
 async function runAutoSave() {
   autoSave.timer = null;
+  if (state.ui.isScheduleCached) {
+    // Ждём свежий график: после загрузки reloadScheduleForCurrentMonth запустит отправку сам
+    updateSaveButtonState();
+    return;
+  }
   if (autoSave.running) {
     autoSave.again = true;
     return;
@@ -2074,7 +2080,13 @@ function bindHistoryControls() {
 
   if (btnSavePyrusEl) {
     // ПК: «Сохранить в Pyrus»; телефон: повторить отправку после ошибки
-    btnSavePyrusEl.addEventListener("click", () => scheduleAutoSave(0));
+    btnSavePyrusEl.addEventListener("click", () => {
+      if (state.ui.isScheduleCached) {
+        if (state.ui.scheduleLoadError) reloadScheduleForCurrentMonth();
+        return;
+      }
+      scheduleAutoSave(0);
+    });
   }
 }
 
@@ -2121,11 +2133,6 @@ function initQuickAssignPanel() {
 
   quickModeToggleEl?.addEventListener("click", () => {
     const currentLine = state.ui.currentLine;
-    
-    if (state.ui.isScheduleCached) {
-      alert("Данные загружаются, редактирование временно недоступно.");
-      return;
-    }
 
     if (!canEditLine(currentLine)) {
       alert(`У вас нет прав на редактирование линии ${currentLine}`);
@@ -2277,6 +2284,15 @@ function updateSaveButtonState() {
     btnSavePyrusEl.title = isCached
       ? "Сейчас отображается кэш, редактирование временно отключено."
       : `У вас только просмотр для вкладки ${lineLabel}`;
+  } else if (isCached) {
+    // Показан кэш: сохранять нельзя, пока не придёт свежий график из Pyrus
+    const loadError = state.ui.scheduleLoadError;
+    btnSavePyrusEl.textContent = loadError ? "Нет связи с Pyrus — повторить" : "Данные загружаются…";
+    btnSavePyrusEl.classList.toggle("is-error", Boolean(loadError));
+    btnSavePyrusEl.disabled = !loadError;
+    btnSavePyrusEl.title = loadError
+      ? `Не удалось загрузить график: ${loadError.message || loadError}. Повторяем автоматически.`
+      : "Загружаем свежий график из Pyrus. Правки сохранятся локально и уйдут после загрузки.";
   } else if (autoSave.running || (mobile && autoSave.timer)) {
     btnSavePyrusEl.textContent = "Сохранение…";
     btnSavePyrusEl.classList.add("is-saving");
@@ -2782,7 +2798,10 @@ async function loadInitialData() {
     const monthKey = getMonthKey(year, monthIndex);
     scheduleService.loadMonthSchedule(monthKey).catch(() => {});
     vacationsService.getVacationsForMonth(monthKey).catch(() => {});
-    await Promise.all([loadDepartmentsCatalog(), loadEmployees(), loadShiftsCatalog()]);
+    const prereqs = await Promise.allSettled([loadDepartmentsCatalog(), loadEmployees(), loadShiftsCatalog()]);
+    for (const r of prereqs) {
+      if (r.status === "rejected") console.error("loadInitialData prerequisite error:", r.reason);
+    }
     initQuickAssignPanel();
     await reloadScheduleForCurrentMonth();
     updateSaveButtonState();
@@ -2970,16 +2989,50 @@ async function loadShiftsCatalog() {
 
 // Переключение месяца: сразу показываем сохранённую копию месяца (если есть)
 // и индикатор загрузки, затем подтягиваем свежие данные.
-async function reloadScheduleForCurrentMonth({ showCached = false } = {}) {
+// Если загрузка не удалась, кэш остаётся на экране (сохранение заблокировано),
+// а запрос повторяется сам с нарастающей паузой.
+const SCHEDULE_RETRY_DELAYS_MS = [3000, 10000, 30000, 60000];
+const scheduleRetry = { timer: null, attempt: 0 };
+
+async function reloadScheduleForCurrentMonth({ showCached = false, isRetry = false } = {}) {
   const { year, monthIndex } = state.monthMeta;
-  if (showCached) loadCachedScheduleForMonth(year, monthIndex);
+  const monthKey = getMonthKey(year, monthIndex);
+  const isCurrentMonth = () =>
+    monthKey === getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex);
+  clearTimeout(scheduleRetry.timer);
+  scheduleRetry.timer = null;
+  if (!isRetry) scheduleRetry.attempt = 0;
+  if (showCached) {
+    state.ui.scheduleLoadError = null;
+    loadCachedScheduleForMonth(year, monthIndex);
+  }
   const container = document.querySelector(".schedule-container");
   container?.classList.add("is-loading");
   try {
     await reloadScheduleForCurrentMonthInner();
+    if (isCurrentMonth() && !state.ui.isScheduleCached) {
+      state.ui.scheduleLoadError = null;
+      scheduleRetry.attempt = 0;
+      // Правки, сделанные пока шла загрузка, — отправить (на ПК — по кнопке)
+      if (isMobileLayout() && linesWithPendingChanges().length) scheduleAutoSave(500);
+    }
+  } catch (err) {
+    console.error("Не удалось загрузить график", err);
+    if (isCurrentMonth()) {
+      state.ui.scheduleLoadError = err;
+      const delay =
+        SCHEDULE_RETRY_DELAYS_MS[Math.min(scheduleRetry.attempt, SCHEDULE_RETRY_DELAYS_MS.length - 1)];
+      scheduleRetry.attempt += 1;
+      scheduleRetry.timer = setTimeout(
+        () => reloadScheduleForCurrentMonth({ isRetry: true }),
+        delay
+      );
+    }
   } finally {
-    if (getMonthKey(year, monthIndex) === getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex)) {
+    if (isCurrentMonth()) {
       container?.classList.remove("is-loading");
+      updateSaveButtonState();
+      updateQuickModeForLine();
     }
     prefetchAdjacentProdCalendars(year, monthIndex);
   }
