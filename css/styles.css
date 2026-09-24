@@ -3868,3 +3868,41 @@ body.quick-delete-active .schedule-table td.shift-cell:hover .shift-pill {
   opacity: 0.6;
   text-decoration: line-through;
 }
+
+/* ===== Стрелки месяца: красные, при наведении подсвечиваются (а не темнеют) ===== */
+.month-switcher #btn-prev-month,
+.month-switcher #btn-next-month {
+  color: var(--sprt-red, #E02B3D);
+  font-weight: 700;
+  background: transparent;
+  transition: background-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+@media (hover: hover) {
+  .month-switcher #btn-prev-month:hover,
+  .month-switcher #btn-next-month:hover {
+    background: var(--sprt-red, #E02B3D) !important;
+    color: #fff;
+    box-shadow: 0 0 0 3px rgba(224, 43, 61, 0.25), 0 0 12px rgba(224, 43, 61, 0.45);
+  }
+}
+.month-switcher #btn-prev-month:focus-visible,
+.month-switcher #btn-next-month:focus-visible {
+  background: var(--sprt-red, #E02B3D) !important;
+  color: #fff;
+  box-shadow: 0 0 0 3px rgba(224, 43, 61, 0.25), 0 0 12px rgba(224, 43, 61, 0.45);
+  outline: none;
+}
+.month-switcher #btn-prev-month:active,
+.month-switcher #btn-next-month:active {
+  filter: brightness(0.92);
+}
+/* Название месяца при наведении тоже светлеет, а не тонет в тёмном */
+.month-switcher .month-label-button:hover,
+.month-switcher .month-label-button:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+:root[data-theme="light"] .month-switcher .month-label-button:hover,
+:root[data-theme="light"] .month-switcher .month-label-button:focus-visible {
+  background: rgba(7, 62, 89, 0.08);
+}
