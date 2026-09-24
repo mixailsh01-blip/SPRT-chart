@@ -3025,7 +3025,11 @@ async function reloadScheduleForCurrentMonthInner() {
       F.telephony != null
         ? findField(fields, F.telephony)
         : fields.find((f) => f && f.type === "checkmark" && /телефони/i.test(String(f.name || "")));
-    const telephony = !(telField && (telField.value === "unchecked" || telField.value === false));
+    // Флаг из таблицы n8n (бэкенд кладёт task.telephony); иначе — из поля Pyrus, если оно есть
+    const telephony =
+      typeof task.telephony === "boolean"
+        ? task.telephony
+        : !(telField && (telField.value === "unchecked" || telField.value === false));
 
     if (!dueField || !personField || !shiftField) continue;
 
