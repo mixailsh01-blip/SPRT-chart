@@ -58,10 +58,10 @@
     },
     "catalogColumns": {
       "shifts": {
-        "name": "",
-        "time": "",
-        "amount": "",
-        "departments": ""
+        "name": "Названия смен",
+        "time": "Время работы",
+        "amount": "Сумма за смену",
+        "departments": "Отдел"
       },
       "departments": {
         "name": "Подразделения компании"
