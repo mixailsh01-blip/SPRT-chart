@@ -1004,7 +1004,63 @@ function persistLocalChanges() {
   } catch (err) {
     console.warn("Не удалось сохранить локальные смены", err);
   }
+  scheduleAutoSave();
 }
+
+// ---------- Автосохранение в Pyrus ----------
+// Любое изменение графика уходит в Pyrus само: через короткую паузу (чтобы серию быстрых
+// кликов отправить одним запросом). Кнопки «Сохранить в Pyrus» больше нет — вместо неё статус.
+const AUTOSAVE_DELAY_MS = 1200;
+const autoSave = { timer: null, running: false, again: false, error: null };
+
+function isMobileLayout() {
+  return window.matchMedia("(max-width: 768px)").matches;
+}
+
+function linesWithPendingChanges() {
+  return LINE_KEYS.filter((line) => countChangesForLine(line) > 0 && canEditLine(line));
+}
+
+function scheduleAutoSave(delayMs = AUTOSAVE_DELAY_MS) {
+  if (autoSave.timer) clearTimeout(autoSave.timer);
+  autoSave.timer = setTimeout(runAutoSave, delayMs);
+  updateSaveButtonState();
+}
+
+async function runAutoSave() {
+  autoSave.timer = null;
+  if (autoSave.running) {
+    autoSave.again = true;
+    return;
+  }
+  const lines = linesWithPendingChanges();
+  if (!lines.length) {
+    updateSaveButtonState();
+    return;
+  }
+  autoSave.running = true;
+  autoSave.error = null;
+  updateSaveButtonState();
+  try {
+    for (const line of lines) await saveLineToPyrus(line);
+  } catch (err) {
+    autoSave.error = err;
+  } finally {
+    autoSave.running = false;
+    updateSaveButtonState();
+    if (autoSave.again) {
+      autoSave.again = false;
+      scheduleAutoSave(200);
+    }
+  }
+}
+
+window.addEventListener("beforeunload", (event) => {
+  if (autoSave.timer || autoSave.running || linesWithPendingChanges().length) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
 
 function persistChangeHistory() {
   try {
@@ -2013,7 +2069,8 @@ function bindHistoryControls() {
   }
 
   if (btnSavePyrusEl) {
-    btnSavePyrusEl.addEventListener("click", handleSaveToPyrus);
+    // Кнопка теперь только статус; по клику — повторить, если была ошибка
+    btnSavePyrusEl.addEventListener("click", () => scheduleAutoSave(0));
   }
 }
 
@@ -2181,25 +2238,34 @@ function updateSaveButtonState() {
   const currentLine = state.ui.currentLine;
   const lineLabel = LINE_LABELS[currentLine] || currentLine;
   const canEdit = canEditLine(currentLine);
+  // «Панель смены» (мобильная) доступна только во вкладке, где есть права на редактирование
+  document.body.classList.toggle("can-edit-line", Boolean(canEdit));
+  if (!canEdit) document.body.classList.remove("mobile-toolbar-open");
   const changesCount = countChangesForLine(currentLine);
   const isCached = state.ui.isScheduleCached;
   
+  btnSavePyrusEl.classList.add("save-status");
+  btnSavePyrusEl.classList.remove("is-error", "is-saving");
   if (!canEdit) {
-    btnSavePyrusEl.textContent = isCached
-      ? `Данные загружаются (${lineLabel})`
-      : `Нет прав на ${lineLabel}`;
+    btnSavePyrusEl.textContent = isCached ? `Данные загружаются…` : `Только просмотр`;
     btnSavePyrusEl.disabled = true;
     btnSavePyrusEl.title = isCached
       ? "Сейчас отображается кэш, редактирование временно отключено."
       : `У вас только просмотр для вкладки ${lineLabel}`;
-  } else if (changesCount === 0) {
-    btnSavePyrusEl.textContent = `Нет изменений (${lineLabel})`;
+  } else if (autoSave.running || autoSave.timer) {
+    btnSavePyrusEl.textContent = "Сохранение…";
+    btnSavePyrusEl.classList.add("is-saving");
     btnSavePyrusEl.disabled = true;
-    btnSavePyrusEl.title = `Нет несохранённых изменений для вкладки ${lineLabel}`;
-  } else {
-    btnSavePyrusEl.textContent = `Сохранить ${lineLabel} (${changesCount})`;
+    btnSavePyrusEl.title = "Изменения отправляются в Pyrus";
+  } else if (autoSave.error || changesCount > 0) {
+    btnSavePyrusEl.textContent = "Не сохранено — повторить";
+    btnSavePyrusEl.classList.add("is-error");
     btnSavePyrusEl.disabled = false;
-    btnSavePyrusEl.title = `Сохранить ${changesCount} изменений для вкладки ${lineLabel}`;
+    btnSavePyrusEl.title = autoSave.error ? String(autoSave.error.message || autoSave.error) : "Есть неотправленные изменения";
+  } else {
+    btnSavePyrusEl.textContent = "✓ Сохранено в Pyrus";
+    btnSavePyrusEl.disabled = true;
+    btnSavePyrusEl.title = "Все изменения сохранены в Pyrus";
   }
 }
 
@@ -2414,50 +2480,42 @@ function buildPyrusChangesPayload(lineToSave = null) {
   return result;
 }
 
-async function handleSaveToPyrus() {
-  if (!btnSavePyrusEl) return;
-
-  const currentLine = state.ui.currentLine;
-  
-  if (currentLine === "ALL" || !canEditLine(currentLine)) {
-    alert(`Сохранение доступно во вкладке подразделения, где у вас есть права редактора`);
-    return;
-  }
+async function saveLineToPyrus(currentLine) {
+  if (currentLine === "ALL" || !canEditLine(currentLine)) return;
   if (getDepartmentItemIdForLine(currentLine) == null) {
-    alert(`Не найден элемент справочника подразделений для вкладки ${LINE_LABELS[currentLine] || currentLine}`);
-    return;
+    throw new Error(`Не найден элемент справочника подразделений для вкладки ${LINE_LABELS[currentLine] || currentLine}`);
   }
+
+  if (state.ui.isScheduleCached) return; // ждём свежие данные из Pyrus
 
   const payload = buildPyrusChangesPayload(currentLine);
-  
-  const hasChanges = 
+  const hasChanges =
     payload.create.task.length > 0 ||
     payload.deleted.task.length > 0 ||
     payload.edit.task.length > 0;
-  
   if (!hasChanges) {
-    alert(`Нет изменений для сохранения во вкладке ${LINE_LABELS[currentLine] || currentLine}`);
+    // Локальные правки совпали с тем, что уже в Pyrus — просто убираем их
+    const { year: y, monthIndex: m } = state.monthMeta;
+    const pfx = `${currentLine}-${y}-${m + 1}-`;
+    for (const key in state.localChanges) if (key.startsWith(pfx)) delete state.localChanges[key];
+    try {
+      localStorage.setItem(STORAGE_KEYS.localChanges, JSON.stringify(state.localChanges));
+    } catch (_) {}
     return;
   }
-  
-  btnSavePyrusEl.disabled = true;
-  btnSavePyrusEl.textContent = "Сохранение...";
+
+  // Снимок на момент отправки: правки, сделанные пока идёт запрос, не должны потеряться
+  const { year, monthIndex } = state.monthMeta;
+  const prefix = `${currentLine}-${year}-${monthIndex + 1}-`;
+  const sentChanges = {};
+  for (const key in state.localChanges) if (key.startsWith(prefix)) sentChanges[key] = state.localChanges[key];
+  const sentSchedule = deepClone(state.scheduleByLine[currentLine]);
 
   try {
-    const meta = {
-      line: currentLine,
-      month: state.monthMeta.monthIndex + 1,
-      year: state.monthMeta.year,
-    };
-    
+    const meta = { line: currentLine, month: monthIndex + 1, year };
     const saveResult = (await apiClient.call("schedule.save", { changes: payload, meta })) || {};
     scheduleService.applySaveResult?.(saveResult);
-    const created = saveResult.created ?? payload.create.task.length;
-    const edited = saveResult.edited ?? payload.edit.task.length;
-    const deleted = saveResult.deleted ?? payload.deleted.task.length;
-    showAppToast(
-      `Pyrus: ${LINE_LABELS[currentLine] || currentLine} • создано ${created}, изменено ${edited}, удалено ${deleted}`
-    );
+
     // Бэкенд сообщает id поля «В телефонии»; если его нет — отметка в Pyrus не записалась
     const sentTelephony = [...payload.create.task, ...payload.edit.task].some((t) => t.telephony === false);
     if (sentTelephony && !saveResult.telephonyField) {
@@ -2473,30 +2531,21 @@ async function handleSaveToPyrus() {
           saveResult.errors.slice(0, 5).map((e) => `• ${e.op}: ${e.message}`).join("\n")
       );
     }
-    
-    state.originalScheduleByLine[currentLine] = deepClone(state.scheduleByLine[currentLine]);
-    
-    const { year, monthIndex } = state.monthMeta;
-    const prefix = `${currentLine}-${year}-${monthIndex + 1}-`;
-    for (const key in state.localChanges) {
-      if (key.startsWith(prefix)) {
-        delete state.localChanges[key];
-      }
-    }
-    persistLocalChanges();
-    
-    updateSaveButtonState();
 
-    const monthKey = getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex);
+    state.originalScheduleByLine[currentLine] = sentSchedule;
+    for (const key in sentChanges) {
+      if (state.localChanges[key] === sentChanges[key]) delete state.localChanges[key];
+    }
+    try {
+      localStorage.setItem(STORAGE_KEYS.localChanges, JSON.stringify(state.localChanges));
+    } catch (_) {}
+
+    const monthKey = getMonthKey(year, monthIndex);
     scheduleService.invalidateMonthSchedule(monthKey);
     await reloadScheduleForCurrentMonth();
-    
   } catch (err) {
-    console.error("handleSaveToPyrus error", err);
-    alert(`Не удалось отправить в Pyrus: ${err.message || err}`);
-  } finally {
-    btnSavePyrusEl.disabled = false;
-    btnSavePyrusEl.textContent = "Сохранить в Pyrus";
+    console.error("saveLineToPyrus error", err);
+    throw err;
   }
 }
 
@@ -2689,6 +2738,8 @@ async function loadInitialData() {
     if (typeof ShiftColors !== 'undefined' && ShiftColors.renderColorLegend) {
       ShiftColors.renderColorLegend(state.ui.currentLine);
     }
+    // Неотправленные правки с прошлого раза — досохранить
+    if (linesWithPendingChanges().length) scheduleAutoSave(500);
   } catch (err) {
     console.error("loadInitialData error:", err);
   }
@@ -3851,7 +3902,7 @@ function openShiftPopover(context, anchorEl) {
         </label>
 
         <div class="shift-popover-note">
-          Изменения сохраняются в локальном кэше в браузере и не отправляются в Pyrus.
+          Изменения сохраняются в Pyrus автоматически.
         </div>
       </div>
     </div>
@@ -3860,8 +3911,8 @@ function openShiftPopover(context, anchorEl) {
       <button class="btn danger" type="button" id="shift-btn-delete" ${
         hasShift ? "" : "disabled"
       }>Удалить</button>
-      <button class="btn" type="button" id="shift-btn-cancel">Отмена</button>
-      <button class="btn primary" type="button" id="shift-btn-save">Сохранить локально</button>
+      <button class="btn" type="button" id="shift-btn-cancel">${isMobileLayout() ? "Отмена" : "Закрыть"}</button>
+      ${isMobileLayout() ? '<button class="btn primary" type="button" id="shift-btn-save">Сохранить</button>' : ""}
     </div>
   `;
 
@@ -3932,12 +3983,11 @@ function openShiftPopover(context, anchorEl) {
         if (amountInput && tmpl.amount) {
           amountInput.value = tmpl.amount;
         }
+        if (!isMobileLayout()) commitPopover();
       });
     });
 
-  shiftPopoverEl
-    .querySelector("#shift-btn-save")
-    .addEventListener("click", () => {
+  const commitPopover = ({ close = true, silent = false } = {}) => {
       const startInput = document.getElementById("shift-start-input");
       const endInput = document.getElementById("shift-end-input");
       const amountInput = document.getElementById("shift-amount-input");
@@ -3946,6 +3996,9 @@ function openShiftPopover(context, anchorEl) {
 	    const end = normalizeTimeHHMM(endInput.value);
       const amount = Number(amountInput.value || 0);
       const telephony = document.getElementById("shift-telephony-input")?.checked !== false;
+
+      // Пока заполнено только одно из времён — ждём второе, без ошибки
+      if (silent && (!start || !end)) return false;
 
       const key = `${line}-${year}-${monthIndex + 1}-${employeeId}-${day}`;
       const templateId =
@@ -3956,7 +4009,7 @@ function openShiftPopover(context, anchorEl) {
 	      const conversion = convertLocalRangeToUtcWithMeta(year, monthIndex, day, start, end);
 	      if (!conversion) {
 	        alert("Некорректное время смены. Проверьте формат (например 08:00–20:00)." );
-	        return;
+	        return false;
 	      }
       state.localChanges[key] = {
         startLocal: start,
@@ -3982,8 +4035,20 @@ function openShiftPopover(context, anchorEl) {
         previousShift: shift || null,
         nextShift: { startLocal: start, endLocal: end, amount, specialShortLabel },
       });
-      closeShiftPopover();
-    });
+      if (close) closeShiftPopover();
+      return true;
+  };
+
+  shiftPopoverEl.querySelector("#shift-btn-save")?.addEventListener("click", () => {
+    if (commitPopover()) scheduleAutoSave(0);
+  });
+
+  // На ПК кнопки сохранения нет: правка применяется сразу и уходит в Pyrus
+  if (!isMobileLayout()) {
+    shiftPopoverEl
+      .querySelectorAll("#shift-start-input, #shift-end-input, #shift-amount-input, #shift-telephony-input")
+      .forEach((el) => el.addEventListener("change", () => commitPopover({ close: false, silent: true })));
+  }
 
   shiftPopoverKeydownHandler = (e) => {
     if (e.key === "Escape") closeShiftPopover();

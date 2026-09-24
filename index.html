@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=13" />
+  <link rel="stylesheet" href="css/styles.css?v=15" />
   <script>
     // iOS Safari игнорирует user-scalable=no — отключаем масштабирование жестом явно
     if ("ontouchstart" in window) {
@@ -37,7 +37,7 @@
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
   </script>
   <!-- Все модули грузятся параллельно, а не цепочкой импортов -->
-  <link rel="modulepreload" href="js/app.js?v=12" />
+  <link rel="modulepreload" href="js/app.js?v=14" />
   <link rel="modulepreload" href="js/config.js?v=7" />
   <link rel="modulepreload" href="js/api/apiClient.js" />
   <link rel="modulepreload" href="js/api/pyrusClient.js" />
@@ -174,7 +174,7 @@
               <select id="quick-template-select"></select>
             </div>
 
-            <div class="toolbar-group">
+            <div class="toolbar-group toolbar-desktop-only">
               <label>Время</label>
               <div class="toolbar-inline">
                 <input id="quick-time-from" type="time" />
@@ -183,7 +183,7 @@
               </div>
             </div>
 
-            <div class="toolbar-group">
+            <div class="toolbar-group toolbar-desktop-only">
               <label for="quick-amount">Сумма</label>
               <input id="quick-amount" type="number" min="0" step="100" />
             </div>
@@ -224,8 +224,8 @@
           </div>
 
           <div style="padding: 8px 12px; font-size: 12px; color: var(--text-muted);">
-            Редактировать можно только во вкладке своего подразделения. Изменения копятся локально
-            и уходят в Pyrus по кнопке «Сохранить».
+            Редактировать можно только во вкладке своего подразделения. Изменения сохраняются
+            в Pyrus автоматически.
           </div>
 
           <div class="change-log-panel">
@@ -251,7 +251,7 @@
   </div>
 
   <script src="js/shift-colors.js?v=3"></script>
-  <script type="module" src="js/app.js?v=12"></script>
+  <script type="module" src="js/app.js?v=14"></script>
 </body>
 
 </html>
