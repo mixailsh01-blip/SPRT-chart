@@ -1274,8 +1274,11 @@ body.legend-open {
     flex: 0 0 auto;
     min-height: auto;
   }
+  /* overflow-x: scroll — полоса прокрутки есть с первой отрисовки. С auto Safari
+     считает высоту блока до появления полосы, строки обрезаются на её 8px,
+     а после пересчёта карточка резко вырастает. */
   #main-screen:not(.clients-active) .schedule-scroll {
-    overflow-x: auto;
+    overflow-x: scroll;
     overflow-y: hidden;
   }
 }
