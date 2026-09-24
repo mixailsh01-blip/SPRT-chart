@@ -32,6 +32,9 @@
       "orgDepartmentIds": [],
       "editRoles": [
         1329637
+      ],
+      "memberRoles": [
+        1329812
       ]
     },
     {
@@ -41,6 +44,9 @@
       "departmentItemId": null,
       "orgDepartmentIds": [],
       "editRoles": [
+        1329638
+      ],
+      "memberRoles": [
         1329638
       ]
     }

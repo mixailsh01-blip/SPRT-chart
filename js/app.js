@@ -4,7 +4,7 @@
 
 import { config, getConfigValue } from "./config.js";
 import { createApiClient } from "./api/apiClient.js";
-import { createPyrusClient } from "./api/pyrusClient.js";
+import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
 import { createVacationsService } from "./services/vacationsService.js";
@@ -2650,9 +2650,25 @@ async function loadDepartmentsCatalog() {
   }
 }
 
+// Участники ролей Pyrus: roleId -> Set(memberId). Нужен для config.lines[].memberRoles.
+async function loadRoleMembers() {
+  const needRoles = LINES.some((l) => l.memberRoles.length > 0);
+  if (!needRoles) return new Map();
+  try {
+    const raw = await pyrusClient.pyrusRequest("/v4/roles", { method: "GET" });
+    const data = unwrapPyrusData(raw);
+    const roles = (Array.isArray(data) ? data[0] : data)?.roles || [];
+    return new Map(roles.map((r) => [Number(r.id), new Set((r.member_ids || []).map(Number))]));
+  } catch (err) {
+    console.error("Не удалось загрузить роли Pyrus", err);
+    return new Map();
+  }
+}
+
 async function loadEmployees() {
   const data = await membersService.getMembers();
   const members = membersService.extractMembersFromPyrusData(data) || [];
+  const roleMembers = await loadRoleMembers();
   const employeesByLine = makeByLine(() => []);
 
   for (const m of members) {
@@ -2677,10 +2693,11 @@ async function loadEmployees() {
     // Постоянный состав вкладки — по отделу оргструктуры Pyrus (config.lines[].orgDepartmentIds).
     // Кроме того, во вкладку попадают все, у кого есть смены этого подразделения в месяце
     // (см. reloadScheduleForCurrentMonth).
-    if (deptId != null) {
-      for (const line of LINES) {
-        if (line.orgDepartmentIds.includes(deptId)) employeesByLine[line.key].push(employee);
-      }
+    // Постоянный состав вкладки: участники ролей (memberRoles) или отделы оргструктуры (orgDepartmentIds)
+    for (const line of LINES) {
+      const byRole = line.memberRoles.some((rid) => roleMembers.get(rid)?.has(Number(m.id)));
+      const byDept = deptId != null && line.orgDepartmentIds.includes(deptId);
+      if (byRole || byDept) employeesByLine[line.key].push(employee);
     }
   }
 

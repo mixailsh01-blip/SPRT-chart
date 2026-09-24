@@ -64,12 +64,14 @@ const sessions = new Map();
 const WHITELIST = [
   /^\/v4\/members$/,
   /^\/v4\/members\/\d+$/,
+  /^\/v4\/roles$/,
   new RegExp(`^/v4/catalogs/(${cfg.pyrus.catalogs.shifts}|${cfg.pyrus.catalogs.departments})$`),
   new RegExp(`^/v4/forms/(${cfg.pyrus.forms.schedule}|${cfg.pyrus.forms.vacations})/register`),
 ];
 
 function pyrus(path) {
   if (path === "/v4/members") return { members };
+  if (path === "/v4/roles") return { roles: [{ id: 1329812, name: "Сотрудники ТП", member_ids: [1, 2] }, { id: 1329638, name: "ПО", member_ids: [3] }] };
   if (/^\/v4\/members\/\d+$/.test(path)) {
     const id = Number(path.split("/").pop());
     return { ...members.find((m) => m.id === id), roles: ROLES_BY_MEMBER[id] || [] };

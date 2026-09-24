@@ -34,7 +34,7 @@ const DEFAULT_CONFIG = {
     },
   },
   lines: [
-    // { key, label, departmentName, departmentItemId, orgDepartmentIds: [], editRoles: [] }
+    // { key, label, departmentName, departmentItemId, orgDepartmentIds: [], memberRoles: [], editRoles: [] }
   ],
   pyrus: {
     catalogs: { shifts: null, departments: null },
@@ -131,6 +131,7 @@ function normalizeLines(rawLines) {
       departmentItemId: l.departmentItemId ?? null,
       orgDepartmentIds: Array.isArray(l.orgDepartmentIds) ? l.orgDepartmentIds.map(Number) : [],
       editRoles: Array.isArray(l.editRoles) ? l.editRoles.map(String) : [],
+      memberRoles: Array.isArray(l.memberRoles) ? l.memberRoles.map(Number) : [],
     }));
 }
 
