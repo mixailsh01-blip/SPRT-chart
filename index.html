@@ -17,10 +17,13 @@
     })();
   </script>
   <style>
-    html { background: #0f1626; color-scheme: dark; }
-    html[data-theme="light"] { background: #f0f0f0; color-scheme: light; }
+    html { background: #03202F; color-scheme: dark; }
+    html[data-theme="light"] { background: #F2F6F8; color-scheme: light; }
   </style>
-  <link rel="stylesheet" href="css/styles.css?v=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css?v=2" />
 </head>
 
 <body class="booting">
@@ -28,9 +31,19 @@
     <!-- Экран логина -->
     <div id="login-screen" class="card">
       <div class="login-brand">
-        <div class="login-portal">СПРТ · График смен</div>
+        <svg class="sprt-logo" viewBox="0 0 440 100" role="img" aria-label="SPRT">
+          <rect class="box" x="0" y="0" width="100" height="100" rx="22"/>
+          <rect class="box" x="113" y="0" width="100" height="100" rx="22"/>
+          <rect class="box" x="226" y="0" width="100" height="100" rx="22"/>
+          <rect class="box" x="339" y="0" width="100" height="100" rx="22"/>
+          <text class="letter" x="50" y="72" font-size="64" text-anchor="middle">S</text>
+          <text class="letter" x="163" y="72" font-size="64" text-anchor="middle">P</text>
+          <text class="letter" x="276" y="72" font-size="64" text-anchor="middle">R</text>
+          <text class="letter" x="389" y="72" font-size="64" text-anchor="middle">T</text>
+        </svg>
+        <div class="login-tagline"><b>Надёжная</b> поддержка Вашего бизнеса</div>
+        <div class="login-portal">График смен</div>
       </div>
-      <p class="muted">Вход с подтверждением кода.</p>
 
       <div class="auth-panels">
         <section class="auth-panel" data-auth-panel="email" role="tabpanel">
@@ -82,7 +95,19 @@
     <div id="main-screen" class="hidden">
       <div class="top-bar">
         <div class="top-bar-left">
-          <h2 id="main-title">График смен</h2>
+          <div class="brand-row">
+            <svg class="sprt-logo" viewBox="0 0 440 100" role="img" aria-label="SPRT">
+            <rect class="box" x="0" y="0" width="100" height="100" rx="22"/>
+            <rect class="box" x="113" y="0" width="100" height="100" rx="22"/>
+            <rect class="box" x="226" y="0" width="100" height="100" rx="22"/>
+            <rect class="box" x="339" y="0" width="100" height="100" rx="22"/>
+            <text class="letter" x="50" y="72" font-size="64" text-anchor="middle">S</text>
+            <text class="letter" x="163" y="72" font-size="64" text-anchor="middle">P</text>
+            <text class="letter" x="276" y="72" font-size="64" text-anchor="middle">R</text>
+            <text class="letter" x="389" y="72" font-size="64" text-anchor="middle">T</text>
+        </svg>
+            <h2 id="main-title">График смен</h2>
+          </div>
           <div id="current-user-label" class="muted"></div>
         </div>
 

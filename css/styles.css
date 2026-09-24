@@ -1,6 +1,6 @@
 :root {
   /* Corporate colors - светлая тема (по умолчанию) */
-  --red: #00c6ff;
+  --red: #1CDBE5;
   --bg: #f0f0f0;
   --bg-card: #ffffff;
   --bg-alt: #ededf0;
@@ -12,7 +12,7 @@
   --table-border: #e0e0e0;
   --table-border-strong: #d0d7e0;
   --table-header-bg: #eeeeef;
-  --calendar-workday-bg: rgba(0, 124, 196, 0.08);
+  --calendar-workday-bg: rgba(7, 62, 89, 0.08);
   --calendar-workday-border: #0b4a8b;
   --calendar-workday-dash: transparent;
   --calendar-weekend-bg: #dcc4ff;
@@ -28,23 +28,23 @@
   --calendar-micro-holiday: #c04aa8;
   --calendar-micro-preholiday: #3a3522;
 
-  --indicator-birthday-bg: #00c6ff;
+  --indicator-birthday-bg: #1CDBE5;
   --indicator-birthday-text: #000000;
 
   --sticky-bg: #ffffff;
   --summary-bg: #eff0f2;
   --toolbar-bg: rgba(240, 240, 240, 0.95);
-  --accent: #00c6ff;
-  --accent-soft: rgba(0, 198, 255, 0.14);
-  --accent-strong: rgba(0, 124, 196, 0.35);
+  --accent: #1CDBE5;
+  --accent-soft: rgba(28, 219, 229, 0.14);
+  --accent-strong: rgba(7, 62, 89, 0.35);
   --text-main: #222222;
   --text: #222222;
   --text-muted: #6b7280;
-  --danger: #ff00ff;
+  --danger: #E02B3D;
   --button-bg: rgba(225, 226, 229, 0.95);
   --button-bg-hover: rgba(213, 214, 218, 1);
-  --pill-bg: rgba(0, 198, 255, 0.12);
-  --pill-border: rgba(0, 198, 255, 0.45);
+  --pill-bg: rgba(28, 219, 229, 0.12);
+  --pill-border: rgba(28, 219, 229, 0.45);
   --pill-text: #ffffff;
   
   /* Цвета для L1 смен - светлая тема (как в темной теме) */
@@ -84,7 +84,7 @@
 /* Темная тема - корпоративные цвета */
 :root[data-theme="dark"],
 body.dark-theme {
-  --red: #00c6ff;
+  --red: #1CDBE5;
   --bg: #0f1626;
   --bg-card: #242c3b;
   --bg-alt: #1f2736;
@@ -96,7 +96,7 @@ body.dark-theme {
   --table-border: #2b3a55;
   --table-border-strong: #253149;
   --table-header-bg: #121b2a;
-  --calendar-workday-bg: rgba(0, 124, 196, 0.08);
+  --calendar-workday-bg: rgba(7, 62, 89, 0.08);
   --calendar-workday-border: var(--table-border-strong);
   --calendar-workday-dash: transparent;
   --calendar-weekend-bg: #2b1638;
@@ -112,23 +112,23 @@ body.dark-theme {
   --calendar-micro-holiday: #ff22cc;
   --calendar-micro-preholiday: #d1b84d;
 
-  --indicator-birthday-bg: #00c6ff;
+  --indicator-birthday-bg: #1CDBE5;
   --indicator-birthday-text: #000000;
 
   --sticky-bg: #242c3b;
   --summary-bg: #242c3b;
   --toolbar-bg: rgba(8, 14, 24, 0.96);
-  --accent: #00c6ff;
-  --accent-soft: rgba(0, 198, 255, 0.18);
-  --accent-strong: rgba(0, 124, 196, 0.4);
+  --accent: #1CDBE5;
+  --accent-soft: rgba(28, 219, 229, 0.18);
+  --accent-strong: rgba(7, 62, 89, 0.4);
   --text-main: #f5f5f5;
   --text: #f5f5f5;
   --text-muted: #94a3b8;
-  --danger: #ff00ff;
+  --danger: #E02B3D;
   --button-bg: rgba(21, 30, 48, 0.95);
   --button-bg-hover: rgba(31, 44, 70, 0.98);
-  --pill-bg: rgba(0, 198, 255, 0.2);
-  --pill-border: rgba(0, 198, 255, 0.6);
+  --pill-bg: rgba(28, 219, 229, 0.2);
+  --pill-border: rgba(28, 219, 229, 0.6);
   --pill-text: #f5f5f5;
   
   /* Цвета для L1 смен - тёмная тема */
@@ -3390,3 +3390,134 @@ body.line-tabs-open{
   display: flex !important;
   pointer-events: auto !important;
 }
+
+/* =====================================================================
+   Фирменный стиль SPRT
+   Палитра: #1CDBE5 (бирюзовый), #E02B3D (красный), #073E59 (тёмно-синий),
+            #FFFFFF, #000000. Шрифт: Manrope.
+   ===================================================================== */
+:root {
+  --sprt-cyan: #1CDBE5;
+  --sprt-red: #E02B3D;
+  --sprt-navy: #073E59;
+  --sprt-white: #FFFFFF;
+  --sprt-black: #000000;
+
+  --font: "Manrope", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* светлая тема */
+  --red: var(--sprt-red);
+  --bg: #F2F6F8;
+  --page-bg: #F2F6F8;
+  --bg-card: #FFFFFF;
+  --card-bg: #FFFFFF;
+  --bg-alt: #E8F0F4;
+  --bg-strong: #D6E3EA;
+  --border: #D6E3EA;
+  --border-strong: #BFD2DC;
+  --table-border: #DCE6EC;
+  --table-border-strong: #C7D7E0;
+  --table-header-bg: #EAF1F5;
+  --sticky-bg: #FFFFFF;
+  --summary-bg: #EEF4F7;
+  --toolbar-bg: rgba(242, 246, 248, 0.96);
+  --accent: var(--sprt-navy);
+  --accent-soft: rgba(28, 219, 229, 0.18);
+  --accent-strong: rgba(7, 62, 89, 0.35);
+  --text-main: #0B1F2A;
+  --text: #0B1F2A;
+  --text-muted: #5B7483;
+  --danger: var(--sprt-red);
+  --button-bg: #E6EEF2;
+  --button-bg-hover: #D6E3EA;
+  --pill-bg: rgba(28, 219, 229, 0.16);
+  --pill-border: rgba(7, 62, 89, 0.35);
+  --indicator-birthday-bg: var(--sprt-red);
+  --indicator-birthday-text: #FFFFFF;
+  --vacation-bg: var(--sprt-navy);
+  --vacation-text: #FFFFFF;
+  --logo-box: var(--sprt-black);
+  --logo-letter: var(--sprt-white);
+}
+
+:root[data-theme="dark"],
+body.dark-theme {
+  --bg: #03202F;
+  --page-bg: #03202F;
+  --bg-card: var(--sprt-navy);
+  --card-bg: var(--sprt-navy);
+  --bg-alt: #0A4866;
+  --bg-strong: #021822;
+  --border: #0F5474;
+  --border-strong: #145F82;
+  --table-border: #0F5071;
+  --table-border-strong: #0C4764;
+  --table-header-bg: #052F45;
+  --sticky-bg: var(--sprt-navy);
+  --summary-bg: var(--sprt-navy);
+  --toolbar-bg: rgba(3, 32, 47, 0.96);
+  --accent: var(--sprt-cyan);
+  --accent-soft: rgba(28, 219, 229, 0.18);
+  --accent-strong: rgba(28, 219, 229, 0.45);
+  --text-main: #FFFFFF;
+  --text: #FFFFFF;
+  --text-muted: #9CC2D3;
+  --button-bg: rgba(5, 47, 69, 0.95);
+  --button-bg-hover: rgba(10, 72, 102, 1);
+  --pill-bg: rgba(28, 219, 229, 0.18);
+  --pill-border: rgba(28, 219, 229, 0.6);
+  --pill-text: #FFFFFF;
+  --vacation-bg: #CFE9F0;
+  --vacation-text: var(--sprt-navy);
+  --logo-box: var(--sprt-white);
+  --logo-letter: var(--sprt-navy);
+}
+
+body { font-family: var(--font); }
+input, select, button, textarea { font-family: inherit; }
+
+/* Логотип */
+.sprt-logo { display: block; height: auto; }
+.sprt-logo .box { fill: var(--logo-box); }
+.sprt-logo .letter { fill: var(--logo-letter); font-family: "Manrope", sans-serif; font-weight: 500; }
+.login-brand .sprt-logo { width: min(260px, 70%); margin: 4px auto 6px; }
+.login-brand .login-tagline { font-size: 13px; color: var(--text-muted); line-height: 1.35; }
+.login-brand .login-tagline b { color: var(--text); font-weight: 700; }
+.top-bar-left .brand-row { display: flex; align-items: center; gap: 12px; }
+.top-bar-left .sprt-logo { width: 96px; flex: 0 0 auto; }
+
+/* Основные кнопки — фирменные */
+.btn.primary {
+  background: var(--sprt-red);
+  border-color: var(--sprt-red);
+  color: #FFFFFF;
+}
+.btn.primary:hover { filter: brightness(1.08); animation: none; }
+.btn.toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-card);
+}
+:root[data-theme="dark"] .btn.toggle.active { color: var(--sprt-navy); }
+.error { color: var(--sprt-red); }
+.login-portal {
+  background: none;
+  color: var(--text);
+  -webkit-text-fill-color: currentColor;
+  font-size: 18px;
+  letter-spacing: 0.5px;
+}
+
+/* Светлая тема: шапка таблицы в фирменном тёмно-синем, текст смен — тёмный */
+:root[data-theme="light"] { --pill-text: #0B1F2A; }
+:root[data-theme="light"] .shift-pill { text-shadow: none; }
+:root[data-theme="light"] .schedule-table thead th:not(.sticky-col) {
+  background: var(--sprt-navy);
+  border-color: #0C4B6B;
+  box-shadow: inset 0 -1px 0 #0C4B6B, inset 0 1px 0 #0C4B6B;
+  color: #FFFFFF;
+}
+:root[data-theme="light"] .schedule-table thead th.day-workday { background: var(--sprt-navy); }
+:root[data-theme="light"] .schedule-table thead th.day-weekend { background: #8E2433; }
+:root[data-theme="light"] .schedule-table thead th.day-holiday { background: var(--sprt-red); }
+:root[data-theme="light"] .schedule-table thead th.day-preholiday { background: var(--sprt-cyan); color: var(--sprt-navy); }

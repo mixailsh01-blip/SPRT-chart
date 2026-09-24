@@ -78,20 +78,20 @@ const DEFAULT_CONFIG = {
     ui: {
       light: {
         workday: { background: "transparent", border: "var(--table-border-strong)", dash: "transparent" },
-        weekend: { background: "#f2e8e8", border: "var(--table-border-strong)", dash: "transparent" },
-        holiday: { background: "#fadddd", border: "#e06b6b", dash: "transparent" },
-        preholiday: { background: "#fff4cc", border: "var(--table-border-strong)", dash: "#3a3522" },
-        microIndicators: { weekend: "#f2e8e8", holiday: "#e06b6b", preholiday: "#3a3522" },
+        weekend: { background: "#FCE6E9", border: "var(--table-border-strong)", dash: "transparent" },
+        holiday: { background: "#F9CDD2", border: "#E02B3D", dash: "transparent" },
+        preholiday: { background: "#DDF8FA", border: "var(--table-border-strong)", dash: "#1CDBE5" },
+        microIndicators: { weekend: "#F6B8C0", holiday: "#E02B3D", preholiday: "#1CDBE5" },
       },
       dark: {
         workday: { background: "transparent", border: "var(--table-border-strong)", dash: "transparent" },
-        weekend: { background: "#332626", border: "var(--table-border-strong)", dash: "transparent" },
-        holiday: { background: "#4a2323", border: "#c45a5a", dash: "transparent" },
-        preholiday: { background: "#e6c65c", border: "var(--table-border-strong)", dash: "#d1b84d" },
-        microIndicators: { weekend: "#332626", holiday: "#c45a5a", preholiday: "#d1b84d" },
+        weekend: { background: "rgba(224, 43, 61, 0.16)", border: "var(--table-border-strong)", dash: "transparent" },
+        holiday: { background: "rgba(224, 43, 61, 0.32)", border: "#E02B3D", dash: "transparent" },
+        preholiday: { background: "rgba(28, 219, 229, 0.22)", border: "var(--table-border-strong)", dash: "#1CDBE5" },
+        microIndicators: { weekend: "rgba(224, 43, 61, 0.5)", holiday: "#E02B3D", preholiday: "#1CDBE5" },
       },
     },
-    indicators: { birthdayBg: "#ff2b2b", birthdayText: "#000000" },
+    indicators: { birthdayBg: "#E02B3D", birthdayText: "#FFFFFF" },
   },
 };
 
