@@ -2,14 +2,14 @@
 // Главный модуль SPA «График смен» (SPRT-chart)
 // Чистый vanilla JS.
 
-import { config, getConfigValue } from "./config.js?v=5";
+import { config, getConfigValue } from "./config.js?v=6";
 import { createApiClient } from "./api/apiClient.js";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
 import { createVacationsService } from "./services/vacationsService.js";
 import { createScheduleService } from "./services/scheduleService.js?v=6";
-import { createProdCalendarService } from "./services/prodCalendarService.js";
+import { createProdCalendarService } from "./services/prodCalendarService.js?v=2";
 
 
 /**
@@ -26,6 +26,17 @@ import { createProdCalendarService } from "./services/prodCalendarService.js";
 const API_BASE_URL = getConfigValue("api.baseUrl", { required: true });
 
 const MAX_DAYS_IN_MONTH = 31;
+
+// Нерабочие праздничные дни РФ (ст. 112 ТК) — на случай, если производственный
+// календарь ещё не опубликован. Переносы выходных сюда не входят.
+const FIXED_RU_HOLIDAYS = {
+  1: [1, 2, 3, 4, 5, 6, 7, 8],
+  2: [23],
+  3: [8],
+  5: [1, 9],
+  6: [12],
+  11: [4],
+};
 
 // Бизнес-часовой пояс (по умолчанию GMT+4)
 const TIMEZONE_OFFSET_MIN = getConfigValue("timezone.localOffsetMin", {
@@ -3125,6 +3136,8 @@ function renderScheduleCurrentLine() {
     const weekday = weekdayNames[(date.getDay() + 6) % 7];
 
     const dayType = prod && prod.dayTypeByDay ? prod.dayTypeByDay[day] : null;
+    // Фолбек, если производственного календаря нет: СБ/ВС и фиксированные праздники РФ
+    const isFallbackHoliday = (FIXED_RU_HOLIDAYS[monthIndex + 1] || []).includes(day);
     const isFallbackWeekend = weekday === "Сб" || weekday === "Вс";
 
     const dayKind = dayType === 1
@@ -3136,7 +3149,7 @@ function renderScheduleCurrentLine() {
           : dayType === 0 || dayType === 4
             ? "workday"
             : dayType == null
-              ? (isFallbackWeekend ? "weekend" : "workday")
+              ? (isFallbackHoliday ? "holiday" : isFallbackWeekend ? "weekend" : "workday")
               : null;
 
     const th1 = document.createElement("th");
@@ -3148,6 +3161,8 @@ th1.appendChild(th1Label);
     if (dayKind) {
       th1.classList.add(`day-${dayKind}`);
       dayKindByDay[day] = dayKind;
+      const kindLabel = { weekend: "Выходной", holiday: "Праздник", preholiday: "Сокращённый (предпраздничный) день" }[dayKind];
+      if (kindLabel) th1.title = kindLabel;
     }
     headRow1.appendChild(th1);
 

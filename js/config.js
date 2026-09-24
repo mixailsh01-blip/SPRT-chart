@@ -78,17 +78,18 @@ const DEFAULT_CONFIG = {
     ui: {
       light: {
         workday: { background: "transparent", border: "var(--table-border-strong)", dash: "transparent" },
-        weekend: { background: "#FCE6E9", border: "var(--table-border-strong)", dash: "transparent" },
+        // Выходной — приглушённый серый, праздник — красный, сокращённый день — жёлтый
+        weekend: { background: "#E3EAEE", border: "var(--table-border-strong)", dash: "transparent" },
         holiday: { background: "#F9CDD2", border: "#E02B3D", dash: "transparent" },
-        preholiday: { background: "#DDF8FA", border: "var(--table-border-strong)", dash: "#1CDBE5" },
-        microIndicators: { weekend: "#F6B8C0", holiday: "#E02B3D", preholiday: "#1CDBE5" },
+        preholiday: { background: "#FFF1C2", border: "var(--table-border-strong)", dash: "#D9A915" },
+        microIndicators: { weekend: "#9FB3BF", holiday: "#E02B3D", preholiday: "#D9A915" },
       },
       dark: {
         workday: { background: "transparent", border: "var(--table-border-strong)", dash: "transparent" },
-        weekend: { background: "rgba(224, 43, 61, 0.16)", border: "var(--table-border-strong)", dash: "transparent" },
+        weekend: { background: "rgba(1, 16, 24, 0.45)", border: "var(--table-border-strong)", dash: "transparent" },
         holiday: { background: "rgba(224, 43, 61, 0.32)", border: "#E02B3D", dash: "transparent" },
-        preholiday: { background: "rgba(28, 219, 229, 0.22)", border: "var(--table-border-strong)", dash: "#1CDBE5" },
-        microIndicators: { weekend: "rgba(224, 43, 61, 0.5)", holiday: "#E02B3D", preholiday: "#1CDBE5" },
+        preholiday: { background: "rgba(230, 190, 60, 0.12)", border: "var(--table-border-strong)", dash: "#E6BE3C" },
+        microIndicators: { weekend: "#5E7F90", holiday: "#E02B3D", preholiday: "#E6BE3C" },
       },
     },
     indicators: { birthdayBg: "#E02B3D", birthdayText: "#FFFFFF" },

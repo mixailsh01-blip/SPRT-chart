@@ -3539,9 +3539,9 @@ input, select, button, textarea { font-family: inherit; }
   color: #FFFFFF;
 }
 :root[data-theme="light"] .schedule-table thead th.day-workday { background: var(--sprt-navy); }
-:root[data-theme="light"] .schedule-table thead th.day-weekend { background: #8E2433; }
+:root[data-theme="light"] .schedule-table thead th.day-weekend { background: #4E6B7A; }
 :root[data-theme="light"] .schedule-table thead th.day-holiday { background: var(--sprt-red); }
-:root[data-theme="light"] .schedule-table thead th.day-preholiday { background: var(--sprt-cyan); color: var(--sprt-navy); }
+:root[data-theme="light"] .schedule-table thead th.day-preholiday { background: #E6BE3C; color: var(--sprt-navy); }
 
 /* ===== Читаемость сетки графика =====
    Раньше ячейки, границы и строки были почти одного цвета и сливались. */
@@ -3568,4 +3568,43 @@ body.dark-theme {
 /* Наведённая строка — заметная рамка сверху и снизу */
 .schedule-table tbody tr.row-hover td {
   box-shadow: inset 0 1px 0 var(--accent-strong), inset 0 -1px 0 var(--accent-strong);
+}
+
+/* ===== Легенда типов дней ===== */
+.day-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text);
+}
+.day-legend-title {
+  font-weight: 600;
+  margin-right: 2px;
+}
+.day-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.day-legend-swatch {
+  width: 24px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--table-border-strong);
+}
+.day-legend-swatch.weekend { background: var(--calendar-weekend-bg); }
+.day-legend-swatch.holiday { background: var(--sprt-red); border-color: var(--sprt-red); }
+.day-legend-swatch.preholiday { background: #E6BE3C; border-color: #E6BE3C; }
+
+/* Сокращённый день: заголовок — сплошной жёлтый (полупрозрачный жёлтый на синем выглядит зелёным) */
+.schedule-table thead th.day-preholiday {
+  background: #E6BE3C;
+  color: var(--sprt-navy);
+}
+.schedule-table thead th.day-holiday {
+  background: var(--sprt-red);
+  color: #FFFFFF;
 }

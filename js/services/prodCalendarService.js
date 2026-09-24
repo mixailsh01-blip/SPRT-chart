@@ -1,7 +1,7 @@
 function prodCalCacheKey(prodCalConfig, year, monthIndex) {
   const mm = String(monthIndex + 1).padStart(2, "0");
   const prefix = prodCalConfig.cacheKeyPrefix || "";
-  return `${prefix}${year}-${mm}_pre1`;
+  return `${prefix}${year}-${mm}_pre2`;
 }
 
 function formatYmdCompact(year, monthIndex, day) {
@@ -72,6 +72,14 @@ export function createProdCalendarService({ config }) {
                   ? 8
                   : null;
       if (code !== null) dayTypeByDay[d] = code;
+    }
+
+    // Календарь на будущий год isdayoff.ru отдаёт как «все дни рабочие» (одни нули),
+    // пока он не утверждён. В реальном месяце всегда есть выходные — такой ответ не принимаем
+    // и не кешируем: приложение покажет СБ/ВС и основные праздники РФ.
+    const hasDaysOff = Object.values(dayTypeByDay).some((c) => c === 1 || c === 8);
+    if (!hasDaysOff) {
+      throw new Error(`ProdCal: календарь на ${year}-${month} ещё не опубликован`);
     }
 
     const payload = {
