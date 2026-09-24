@@ -8,7 +8,7 @@ import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
 import { createVacationsService } from "./services/vacationsService.js";
-import { createScheduleService } from "./services/scheduleService.js";
+import { createScheduleService } from "./services/scheduleService.js?v=6";
 import { createProdCalendarService } from "./services/prodCalendarService.js";
 
 
@@ -2409,6 +2409,7 @@ async function handleSaveToPyrus() {
     };
     
     const saveResult = (await apiClient.call("schedule.save", { changes: payload, meta })) || {};
+    scheduleService.applySaveResult?.(saveResult);
     const created = saveResult.created ?? payload.create.task.length;
     const edited = saveResult.edited ?? payload.edit.task.length;
     const deleted = saveResult.deleted ?? payload.deleted.task.length;
