@@ -3665,3 +3665,109 @@ body.dark-theme {
   --shift-special-bg: rgba(156, 178, 190, 0.16);
   --shift-special-border: rgba(156, 178, 190, 0.55);
 }
+
+/* ===== Мобильная вёрстка: выравнивание =====
+   Кнопки одной высоты, компактный переключатель месяца, таблица по высоте содержимого,
+   смены помещаются в ячейку. */
+@media (max-width: 768px) {
+  .top-bar-right {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    align-content: flex-start;
+    gap: 6px;
+    height: auto;
+  }
+  #btn-mobile-toolbar {
+    margin: 0;
+    position: static;
+  }
+  /* Кнопки из блока действий встают в общий ряд с «Тема»/«Выйти» */
+  .top-bar-right .schedule-actions {
+    display: contents;
+  }
+  .top-bar-right .btn.toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 34px;
+    min-height: 34px;
+    padding: 0 12px;
+    font-size: 12px;
+    line-height: 1;
+    white-space: nowrap;
+    border-radius: 17px;
+    margin: 0;
+  }
+  .month-switcher {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px;
+    min-height: 0;
+    border-radius: 20px;
+  }
+  .month-switcher .btn.toggle {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 16px;
+  }
+  #current-month-label {
+    font-size: 14px;
+    flex: 1;
+    text-align: center;
+  }
+
+  /* Таблица занимает высоту по содержимому; при большом числе строк прокручивается внутри */
+  #main-screen:not(.clients-active) #schedule-view,
+  #main-screen:not(.clients-active) .schedule-container {
+    flex: 0 1 auto;
+    min-height: 0;
+  }
+
+  /* Ячейка шире, чтобы «09:00» помещалось целиком */
+  :root {
+    --cell-size: 38px;
+  }
+  .schedule-table th.sticky-col,
+  .schedule-table td.sticky-col {
+    min-width: 112px;
+    max-width: 132px;
+  }
+  .schedule-table tbody td {
+    height: 38px;
+  }
+  /* Шапка таблицы: прокручивается внутри .schedule-scroll, поэтому прилипает к его верху (0),
+     а не на высоту верхней панели страницы — иначе на телефоне шапка «уезжала» в середину таблицы. */
+  .schedule-table thead {
+    position: static;
+  }
+  .schedule-table thead tr:first-child th {
+    top: 0;
+    height: 30px;
+    box-sizing: border-box;
+  }
+  .schedule-table thead tr:nth-child(2) th {
+    top: 30px;
+    height: 24px;
+    box-sizing: border-box;
+  }
+  .telephony-dot {
+    width: 7px;
+    height: 7px;
+    top: -2px;
+    right: -2px;
+  }
+}
+
+/* Шапка таблицы непрозрачная: полупрозрачный фон выходных пропускал смены при прокрутке */
+.schedule-table thead th.day-weekend {
+  background: linear-gradient(var(--calendar-weekend-bg), var(--calendar-weekend-bg)), var(--table-header-bg);
+}
+.schedule-table thead th.day-workday {
+  background-color: var(--table-header-bg);
+}
