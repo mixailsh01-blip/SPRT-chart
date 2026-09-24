@@ -1266,6 +1266,14 @@ body.legend-open {
    Иначе в Safari с постоянными скроллбарами горизонтальная полоса «съедает» 8px,
    появляется вертикальная полоса и последняя строка обрезается / съезжает. */
 @media (min-width: 769px) {
+  /* Высота блоков — строго по содержимому. flex: 1 + min-height: 0 в Safari
+     при первой отрисовке сжимал таблицу, а потом она резко «вырастала». */
+  #main-screen:not(.clients-active) #schedule-view,
+  #main-screen:not(.clients-active) .schedule-container,
+  #main-screen:not(.clients-active) .schedule-scroll {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
   #main-screen:not(.clients-active) .schedule-scroll {
     overflow-x: auto;
     overflow-y: hidden;
