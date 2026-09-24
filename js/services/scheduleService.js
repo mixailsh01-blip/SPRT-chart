@@ -2,6 +2,7 @@ import { cached, invalidateByPrefix, invalidateKey } from "../cache/requestCache
 import { unwrapPyrusData } from "../api/pyrusClient.js";
 
 const SCHEDULE_TTL_MS = 90_000;
+const REGISTER_CACHE_KEY = "pyrus:schedule:register";
 // Реестр Pyrus обновляется с задержкой: только что созданные/изменённые задачи
 // какое-то время в нём не видны. Держим результат сохранения поверх реестра.
 const RECENT_WRITES_TTL_MS = 5 * 60_000;
@@ -59,8 +60,10 @@ export function createScheduleService({ pyrusClient, formId } = {}) {
 
   async function loadMonthSchedule(monthKey, { force } = {}) {
     const token = ++latestToken;
+    // Реестр формы один на все месяцы (Pyrus отдаёт его целиком), поэтому кешируем
+    // его одним ключом: переключение месяцев в пределах TTL — без запросов.
     const data = await cached(
-      `pyrus:schedule:${monthKey}`,
+      REGISTER_CACHE_KEY,
       { ttlMs: SCHEDULE_TTL_MS, force },
       async () => {
         const raw = await pyrusClient.pyrusRequest(`/v4/forms/${formId}/register`, {
@@ -77,9 +80,8 @@ export function createScheduleService({ pyrusClient, formId } = {}) {
     };
   }
 
-  function invalidateMonthSchedule(monthKey) {
-    if (!monthKey) return;
-    invalidateKey(`pyrus:schedule:${monthKey}`);
+  function invalidateMonthSchedule() {
+    invalidateKey(REGISTER_CACHE_KEY);
   }
 
   function invalidateAllSchedule() {

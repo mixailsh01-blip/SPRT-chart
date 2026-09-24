@@ -7,8 +7,8 @@ import { createApiClient } from "./api/apiClient.js";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
-import { createVacationsService } from "./services/vacationsService.js";
-import { createScheduleService } from "./services/scheduleService.js?v=6";
+import { createVacationsService } from "./services/vacationsService.js?v=2";
+import { createScheduleService } from "./services/scheduleService.js?v=7";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=2";
 
 
@@ -957,7 +957,7 @@ function renderMonthPicker() {
       state.monthMeta.monthIndex = index;
       updateMonthLabel();
       closeMonthPickerPopover();
-      reloadScheduleForCurrentMonth();
+      reloadScheduleForCurrentMonth({ showCached: true });
     });
     monthPickerGridEl.appendChild(btn);
   });
@@ -1942,7 +1942,7 @@ btnPrevMonthEl.addEventListener("click", () => {
     state.monthMeta.year = date.getUTCFullYear();
     state.monthMeta.monthIndex = date.getUTCMonth();
     updateMonthLabel();
-    reloadScheduleForCurrentMonth();
+    reloadScheduleForCurrentMonth({ showCached: true });
   });
 
   btnNextMonthEl.addEventListener("click", () => {
@@ -1952,7 +1952,7 @@ btnPrevMonthEl.addEventListener("click", () => {
     state.monthMeta.year = date.getUTCFullYear();
     state.monthMeta.monthIndex = date.getUTCMonth();
     updateMonthLabel();
-    reloadScheduleForCurrentMonth();
+    reloadScheduleForCurrentMonth({ showCached: true });
   });
 
   updateLineToggleUI();
@@ -2827,9 +2827,37 @@ async function loadShiftsCatalog() {
   persistCachedShiftTemplates();
 }
 
-async function reloadScheduleForCurrentMonth() {
+// Переключение месяца: сразу показываем сохранённую копию месяца (если есть)
+// и индикатор загрузки, затем подтягиваем свежие данные.
+async function reloadScheduleForCurrentMonth({ showCached = false } = {}) {
+  const { year, monthIndex } = state.monthMeta;
+  if (showCached) loadCachedScheduleForMonth(year, monthIndex);
+  const container = document.querySelector(".schedule-container");
+  container?.classList.add("is-loading");
+  try {
+    await reloadScheduleForCurrentMonthInner();
+  } finally {
+    if (getMonthKey(year, monthIndex) === getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex)) {
+      container?.classList.remove("is-loading");
+    }
+    prefetchAdjacentProdCalendars(year, monthIndex);
+  }
+}
+
+// Производственный календарь соседних месяцев — заранее, чтобы листание не ждало isdayoff.ru
+function prefetchAdjacentProdCalendars(year, monthIndex) {
+  for (const delta of [-1, 1]) {
+    const d = new Date(Date.UTC(year, monthIndex + delta, 1));
+    prodCalendarService.getProdCalendarForMonth(d.getUTCFullYear(), d.getUTCMonth()).catch(() => {});
+  }
+}
+
+async function reloadScheduleForCurrentMonthInner() {
   const { year, monthIndex } = state.monthMeta;
   const monthKey = getMonthKey(year, monthIndex);
+  // Календарь запрашиваем параллельно с графиком, а не после него
+  const prodCalendarPromise = prodCalendarService.getProdCalendarForMonth(year, monthIndex);
+  prodCalendarPromise.catch(() => {});
   const cachedVacations =
     typeof vacationsService.peekVacationsForMonth === "function"
       ? vacationsService.peekVacationsForMonth(monthKey)
@@ -2870,7 +2898,7 @@ async function reloadScheduleForCurrentMonth() {
 
   // Производственный календарь РФ: помесячно (isdayoff.ru), с кэшем и фолбеком на СБ/ВС
   try {
-    state.prodCalendar = await prodCalendarService.getProdCalendarForMonth(year, monthIndex);
+    state.prodCalendar = await prodCalendarPromise;
   } catch (e) {
     console.warn('Не удалось загрузить производственный календарь РФ, используем фолбек СБ/ВС', e);
     state.prodCalendar = null;

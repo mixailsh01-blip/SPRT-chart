@@ -31,9 +31,11 @@ export function createVacationsService({
       `pyrus:vacations:${monthKey}`,
       { ttlMs, force },
       async () => {
-        const raw = await pyrusClient.pyrusRequest(`/v4/forms/${formId}/register`, {
-          method: "GET",
-        });
+        // Реестр отпусков один на все месяцы — запрашиваем его один раз (кеш 90 с),
+        // а по месяцам только разбираем.
+        const raw = await cached("pyrus:vacations:register", { ttlMs: 90_000 }, () =>
+          pyrusClient.pyrusRequest(`/v4/forms/${formId}/register`, { method: "GET" })
+        );
         const data = unwrapPyrusData(raw);
         const wrapper = Array.isArray(data) ? data[0] : data;
         const tasks = (wrapper && wrapper.tasks) || [];

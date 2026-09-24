@@ -3608,3 +3608,12 @@ body.dark-theme {
   background: var(--sprt-red);
   color: #FFFFFF;
 }
+
+/* Индикатор загрузки месяца */
+.schedule-container.is-loading .schedule-scroll {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+.schedule-container.is-loading {
+  cursor: progress;
+}
