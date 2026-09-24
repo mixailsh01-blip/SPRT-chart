@@ -2,7 +2,7 @@
 // Главный модуль SPA «График смен» (SPRT-chart)
 // Чистый vanilla JS.
 
-import { config, getConfigValue } from "./config.js";
+import { config, getConfigValue } from "./config.js?v=4";
 import { createApiClient } from "./api/apiClient.js";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
@@ -39,7 +39,12 @@ const TIMEZONE_OFFSET_MIN = getConfigValue("timezone.localOffsetMin", {
 // Конфиг вкладок (подразделений)
 // -----------------------------
 // Вкладки строятся из config.lines. "ALL" (ВСЕ) — служебная вкладка со всем графиком.
-const LINES = config.lines;
+const LINES = config.lines.map((l) => ({
+  ...l,
+  memberRoles: Array.isArray(l.memberRoles) ? l.memberRoles.map(Number) : [],
+  orgDepartmentIds: Array.isArray(l.orgDepartmentIds) ? l.orgDepartmentIds.map(Number) : [],
+  editRoles: Array.isArray(l.editRoles) ? l.editRoles.map(String) : [],
+}));
 const LINE_KEYS = LINES.map((l) => l.key);
 const ALL_LINE_KEYS = ["ALL", ...LINE_KEYS];
 const LINE_KEYS_IN_UI_ORDER = ALL_LINE_KEYS;
