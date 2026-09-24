@@ -190,6 +190,7 @@ const state = {
   },
   quickMode: {
     enabled: false,
+    deleteMode: false, // в «Шаблоне смены» выбрано «Удалить смену»: клик по ячейке стирает смену
     templateId: null,
     timeFrom: "",
     timeTo: "",
@@ -2086,7 +2087,11 @@ function initQuickAssignPanel() {
 
   quickTemplateSelectEl?.addEventListener("change", () => {
     const val = quickTemplateSelectEl.value;
-    state.quickMode.templateId = val ? Number(val) : null;
+    state.quickMode.deleteMode = val === QUICK_DELETE_VALUE;
+    state.quickMode.templateId = val && !state.quickMode.deleteMode ? Number(val) : null;
+    updateQuickModeToggleUI();
+    updateQuickModeForLine();
+    if (state.quickMode.deleteMode) return;
 
     const tmpl = getCurrentLineTemplates().find(
       (t) => t.id === state.quickMode.templateId
@@ -2134,6 +2139,8 @@ function initQuickAssignPanel() {
   state.ui.quickPanelBound = true;
 }
 
+const QUICK_DELETE_VALUE = "__delete__";
+
 function renderQuickTemplateOptions() {
   if (!quickTemplateSelectEl) return;
 
@@ -2156,7 +2163,17 @@ function renderQuickTemplateOptions() {
     quickTemplateSelectEl.appendChild(option);
   });
 
+  const delOption = document.createElement("option");
+  delOption.value = QUICK_DELETE_VALUE;
+  delOption.textContent = "🗑 Удалить смену";
+  quickTemplateSelectEl.appendChild(delOption);
+
   const hasPrev = currentLineTemplates.some((t) => t.id === prevSelected);
+  if (state.quickMode.deleteMode) {
+    quickTemplateSelectEl.value = QUICK_DELETE_VALUE;
+    state.quickMode.templateId = null;
+    return;
+  }
   quickTemplateSelectEl.value = hasPrev ? String(prevSelected) : "";
   state.quickMode.templateId = hasPrev ? prevSelected : null;
 }
@@ -2178,10 +2195,13 @@ function syncQuickPanelInputs() {
 
 function updateQuickModeToggleUI() {
   if (!quickModeToggleEl) return;
+  const del = state.quickMode.deleteMode;
   quickModeToggleEl.classList.toggle("active", state.quickMode.enabled);
+  quickModeToggleEl.classList.toggle("delete-mode", del);
+  document.body.classList.toggle("quick-delete-active", state.quickMode.enabled && del);
   quickModeToggleEl.textContent = state.quickMode.enabled
-    ? "Быстрое назначение: Вкл"
-    : "Быстрое назначение";
+    ? del ? "Быстрое удаление: Вкл" : "Быстрое назначение: Вкл"
+    : del ? "Быстрое удаление" : "Быстрое назначение";
 }
 
 function updateQuickModeForLine() {
@@ -2208,16 +2228,17 @@ function updateQuickModeForLine() {
     quickTemplateSelectEl.disabled = !canEdit;
   }
   
+  const noTimes = !canEdit || state.quickMode.deleteMode;
   if (quickTimeFromInputEl) {
-    quickTimeFromInputEl.disabled = !canEdit;
+    quickTimeFromInputEl.disabled = noTimes;
   }
   
   if (quickTimeToInputEl) {
-    quickTimeToInputEl.disabled = !canEdit;
+    quickTimeToInputEl.disabled = noTimes;
   }
   
   if (quickAmountInputEl) {
-    quickAmountInputEl.disabled = !canEdit;
+    quickAmountInputEl.disabled = noTimes;
   }
 }
 
@@ -2624,6 +2645,27 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
       },
       cellEl
     );
+    return;
+  }
+
+  if (state.quickMode.enabled && state.quickMode.deleteMode) {
+    // Быстрое удаление: клик по ячейке со сменой стирает её (уходит в Pyrus при сохранении)
+    if (!shift) return;
+    const { year, monthIndex } = state.monthMeta;
+    const key = `${line}-${year}-${monthIndex + 1}-${row.employeeId}-${day}`;
+    state.localChanges[key] = { deleted: true };
+    persistLocalChanges();
+    applyLocalChangesToSchedule();
+    renderScheduleCurrentLine();
+    logChange({
+      action: "delete",
+      line,
+      employeeId: row.employeeId,
+      employeeName: row.employeeName,
+      day,
+      previousShift: shift,
+      nextShift: null,
+    });
     return;
   }
 

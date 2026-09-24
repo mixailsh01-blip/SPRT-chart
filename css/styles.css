@@ -3852,3 +3852,19 @@ body.dark-theme {
   background: rgba(224, 43, 61, 0.35);
   cursor: pointer;
 }
+
+/* ===== Быстрое удаление смен ===== */
+#quick-mode-toggle.delete-mode.active {
+  background: #C73A3A;
+  border-color: #C73A3A;
+  color: #fff;
+}
+body.quick-delete-active .schedule-table td.shift-cell .shift-pill {
+  cursor: not-allowed;
+}
+body.quick-delete-active .schedule-table td.shift-cell:hover .shift-pill {
+  outline: 2px solid #E04848;
+  outline-offset: -2px;
+  opacity: 0.6;
+  text-decoration: line-through;
+}
