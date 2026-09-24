@@ -2,7 +2,7 @@
 // Главный модуль SPA «График смен» (SPRT-chart)
 // Чистый vanilla JS.
 
-import { config, getConfigValue } from "./config.js?v=6";
+import { config, getConfigValue } from "./config.js?v=7";
 import { createApiClient } from "./api/apiClient.js";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
@@ -2309,6 +2309,7 @@ function shiftsEqual(a, b) {
     (a.endLocal || "") === (b.endLocal || "") &&
     normalizeAmount(a.amount) === normalizeAmount(b.amount) &&
     normalizeTemplate(a.templateId) === normalizeTemplate(b.templateId) &&
+    (a.telephony !== false) === (b.telephony !== false) &&
     normalizeIso(a.startUtcIso) === normalizeIso(b.startUtcIso) &&
     normalizeIso(a.endUtcIso) === normalizeIso(b.endUtcIso) &&
     normDuration(a) === normDuration(b)
@@ -2369,6 +2370,7 @@ function buildPyrusChangesPayload(lineToSave = null) {
             duration: conversion.durationMinutes,
             amount: Number(currentShift.amount || 0),
             department_item_id: departmentItemId,
+            telephony: currentShift.telephony !== false,
           });
           return;
         }
@@ -2402,6 +2404,7 @@ function buildPyrusChangesPayload(lineToSave = null) {
             duration: conversion.durationMinutes,
             amount: Number(currentShift.amount || 0),
             department_item_id: departmentItemId,
+            telephony: currentShift.telephony !== false,
           });
         }
       });
@@ -2602,6 +2605,7 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
       amount,
       templateId,
       specialShortLabel,
+      telephony: previousShift ? previousShift.telephony !== false : true,
 	      startUtcIso: conversion.startUtcIso,
 	      endUtcIso: conversion.endUtcIso,
 	      durationMinutes: conversion.durationMinutes,
@@ -2956,6 +2960,13 @@ async function reloadScheduleForCurrentMonthInner() {
     const personField = findField(fields, F.person);
     const shiftField = findField(fields, F.template);
     const deptField = F.department != null ? findField(fields, F.department) : null;
+    // «Включён в телефонию»: чекбокс в Pyrus; нет поля или значения — считаем включённым
+    // Поле ищем по id из config (pyrus.fields.schedule.telephony) или по названию «…телефони…»
+    const telField =
+      F.telephony != null
+        ? findField(fields, F.telephony)
+        : fields.find((f) => f && f.type === "checkmark" && /телефони/i.test(String(f.name || "")));
+    const telephony = !(telField && (telField.value === "unchecked" || telField.value === false));
 
     if (!dueField || !personField || !shiftField) continue;
 
@@ -3018,6 +3029,7 @@ async function reloadScheduleForCurrentMonthInner() {
       rawShift: shiftCatalog,
       specialShortLabel: (matchingTemplate && matchingTemplate.specialShortLabel) || null,
       lineKey,
+      telephony,
     };
 
     const putToMap = (key) => {
@@ -3417,6 +3429,12 @@ th1.appendChild(th1Label);
           pill.appendChild(line1);
           pill.appendChild(line2);
         }
+        // Индикатор телефонии: зелёная точка — в телефонии, красная — нет (например, выезд)
+        const telDot = document.createElement("span");
+        const onPhone = shift.telephony !== false;
+        telDot.className = `telephony-dot ${onPhone ? "on" : "off"}`;
+        telDot.title = onPhone ? "Включён в телефонию" : "Не в телефонии (выезд)";
+        pill.appendChild(telDot);
         td.appendChild(pill);
 
         totalAmount += shift.amount || 0;
@@ -3819,6 +3837,11 @@ function openShiftPopover(context, anchorEl) {
           }">
         </div>
 
+        <label class="telephony-toggle">
+          <input type="checkbox" id="shift-telephony-input" ${shift?.telephony === false ? "" : "checked"}>
+          <span>Включён в телефонию</span>
+        </label>
+
         <div class="shift-popover-note">
           Изменения сохраняются в локальном кэше в браузере и не отправляются в Pyrus.
         </div>
@@ -3914,6 +3937,7 @@ function openShiftPopover(context, anchorEl) {
 	    const start = normalizeTimeHHMM(startInput.value);
 	    const end = normalizeTimeHHMM(endInput.value);
       const amount = Number(amountInput.value || 0);
+      const telephony = document.getElementById("shift-telephony-input")?.checked !== false;
 
       const key = `${line}-${year}-${monthIndex + 1}-${employeeId}-${day}`;
       const templateId =
@@ -3932,6 +3956,7 @@ function openShiftPopover(context, anchorEl) {
         amount,
         templateId,
         specialShortLabel,
+        telephony,
 	        startUtcIso: conversion.startUtcIso,
 	        endUtcIso: conversion.endUtcIso,
 	        durationMinutes: conversion.durationMinutes,
@@ -3997,6 +4022,7 @@ function applyLocalChangesToSchedule() {
             startUtcIso: enriched.startUtcIso || null,
             endUtcIso: enriched.endUtcIso || null,
             durationMinutes: enriched.durationMinutes ?? null,
+            telephony: change.telephony !== false,
           };
         } else {
           row.shiftsByDay[idx].startLocal = change.startLocal;
@@ -4010,6 +4036,7 @@ function applyLocalChangesToSchedule() {
           row.shiftsByDay[idx].endUtcIso = enriched.endUtcIso || null;
           row.shiftsByDay[idx].durationMinutes =
             enriched.durationMinutes ?? row.shiftsByDay[idx].durationMinutes;
+          if (change.telephony != null) row.shiftsByDay[idx].telephony = change.telephony !== false;
         }
       });
     }

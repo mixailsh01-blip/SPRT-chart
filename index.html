@@ -23,15 +23,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=9" />
+  <link rel="stylesheet" href="css/styles.css?v=10" />
   <script>
     // Стартуем загрузку config.json сразу, параллельно с модулями
     window.__configPromise = fetch("config.json", { cache: "no-store" })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
   </script>
   <!-- Все модули грузятся параллельно, а не цепочкой импортов -->
-  <link rel="modulepreload" href="js/app.js?v=10" />
-  <link rel="modulepreload" href="js/config.js?v=6" />
+  <link rel="modulepreload" href="js/app.js?v=11" />
+  <link rel="modulepreload" href="js/config.js?v=7" />
   <link rel="modulepreload" href="js/api/apiClient.js" />
   <link rel="modulepreload" href="js/api/pyrusClient.js" />
   <link rel="modulepreload" href="js/utils/logger.js" />
@@ -209,6 +209,11 @@
               <span class="day-legend-item"><span class="day-legend-swatch holiday"></span>Праздник</span>
               <span class="day-legend-item"><span class="day-legend-swatch preholiday"></span>Сокращённый (предпраздничный) день</span>
             </div>
+            <div class="day-legend">
+              <span class="day-legend-title">Телефония:</span>
+              <span class="day-legend-item"><span class="day-legend-dot on"></span>Включён</span>
+              <span class="day-legend-item"><span class="day-legend-dot off"></span>Не в телефонии (выезд)</span>
+            </div>
           </div>
 
           <div style="padding: 8px 12px; font-size: 12px; color: var(--text-muted);">
@@ -238,8 +243,8 @@
     </div>
   </div>
 
-  <script src="js/shift-colors.js"></script>
-  <script type="module" src="js/app.js?v=10"></script>
+  <script src="js/shift-colors.js?v=2"></script>
+  <script type="module" src="js/app.js?v=11"></script>
 </body>
 
 </html>

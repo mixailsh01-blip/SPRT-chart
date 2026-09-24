@@ -44,7 +44,7 @@ const DEFAULT_CONFIG = {
     },
     forms: { schedule: null, vacations: null },
     fields: {
-      schedule: { department: null, person: null, due: null, amount: null, template: null },
+      schedule: { department: null, person: null, due: null, amount: null, template: null, telephony: null },
       vacations: { period: null, year: null, person: null, department: null, days: null },
     },
   },

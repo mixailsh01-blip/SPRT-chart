@@ -3617,3 +3617,51 @@ body.dark-theme {
 .schedule-container.is-loading {
   cursor: progress;
 }
+
+/* ===== Индикатор телефонии ===== */
+.shift-pill {
+  position: relative;
+}
+.telephony-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--bg-card);
+  pointer-events: auto;
+}
+.telephony-dot.on { background: #2BC46B; }
+.telephony-dot.off { background: #E02B3D; }
+
+.telephony-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 4px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.telephony-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: #2BC46B;
+}
+.day-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.day-legend-dot.on { background: #2BC46B; }
+.day-legend-dot.off { background: #E02B3D; }
+
+/* Особые смены (ВЫХ и т.п.) — нейтральный серый: жёлтый на синем фоне выглядел зелёным */
+:root,
+:root[data-theme="dark"],
+:root[data-theme="light"] {
+  --shift-special-bg: rgba(156, 178, 190, 0.16);
+  --shift-special-border: rgba(156, 178, 190, 0.55);
+}

@@ -8,9 +8,12 @@ const colorState = {
   templateMetaById: new Map(),
 };
 
+// Красный и зелёный зарезервированы под индикатор телефонии (точка в ячейке),
+// поэтому смены красим только оттенками синего, фиолетового, бирюзового, оранжевого и т.п.
+const SHIFT_HUES = [212, 272, 190, 32, 300, 232, 48, 252, 200, 318, 222, 285];
+
 function generateColorForIndex(index, saturation = 64, lightness = 54, isDark = false) {
-  const goldenRatioConjugate = 0.618033988749895;
-  const hue = Math.round((index * goldenRatioConjugate * 360) % 360);
+  const hue = SHIFT_HUES[index % SHIFT_HUES.length];
 
   const adjSaturation = isDark ? Math.min(saturation + 6, 76) : saturation;
   const adjLightness = isDark ? Math.min(lightness + 6, 70) : lightness;
