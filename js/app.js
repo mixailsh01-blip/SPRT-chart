@@ -1004,12 +1004,14 @@ function persistLocalChanges() {
   } catch (err) {
     console.warn("Не удалось сохранить локальные смены", err);
   }
-  scheduleAutoSave();
+  // Телефон — автосохранение; ПК — изменения копятся и уходят по кнопке «Сохранить в Pyrus»
+  if (isMobileLayout()) scheduleAutoSave();
+  else updateSaveButtonState();
 }
 
-// ---------- Автосохранение в Pyrus ----------
-// Любое изменение графика уходит в Pyrus само: через короткую паузу (чтобы серию быстрых
-// кликов отправить одним запросом). Кнопки «Сохранить в Pyrus» больше нет — вместо неё статус.
+// ---------- Сохранение в Pyrus ----------
+// Телефон: любое изменение уходит в Pyrus само, через короткую паузу (серия кликов — один запрос).
+// ПК: правки копятся локально, отправка — общей кнопкой «Сохранить в Pyrus».
 const AUTOSAVE_DELAY_MS = 1200;
 const autoSave = { timer: null, running: false, again: false, error: null };
 
@@ -1045,6 +1047,7 @@ async function runAutoSave() {
     for (const line of lines) await saveLineToPyrus(line);
   } catch (err) {
     autoSave.error = err;
+    if (!isMobileLayout()) alert(`Не удалось отправить в Pyrus: ${err.message || err}`);
   } finally {
     autoSave.running = false;
     updateSaveButtonState();
@@ -2069,7 +2072,7 @@ function bindHistoryControls() {
   }
 
   if (btnSavePyrusEl) {
-    // Кнопка теперь только статус; по клику — повторить, если была ошибка
+    // ПК: «Сохранить в Pyrus»; телефон: повторить отправку после ошибки
     btnSavePyrusEl.addEventListener("click", () => scheduleAutoSave(0));
   }
 }
@@ -2244,7 +2247,8 @@ function updateSaveButtonState() {
   const changesCount = countChangesForLine(currentLine);
   const isCached = state.ui.isScheduleCached;
   
-  btnSavePyrusEl.classList.add("save-status");
+  const mobile = isMobileLayout();
+  btnSavePyrusEl.classList.toggle("save-status", mobile);
   btnSavePyrusEl.classList.remove("is-error", "is-saving");
   if (!canEdit) {
     btnSavePyrusEl.textContent = isCached ? `Данные загружаются…` : `Только просмотр`;
@@ -2252,16 +2256,24 @@ function updateSaveButtonState() {
     btnSavePyrusEl.title = isCached
       ? "Сейчас отображается кэш, редактирование временно отключено."
       : `У вас только просмотр для вкладки ${lineLabel}`;
-  } else if (autoSave.running || autoSave.timer) {
+  } else if (autoSave.running || (mobile && autoSave.timer)) {
     btnSavePyrusEl.textContent = "Сохранение…";
     btnSavePyrusEl.classList.add("is-saving");
     btnSavePyrusEl.disabled = true;
     btnSavePyrusEl.title = "Изменения отправляются в Pyrus";
+  } else if (!mobile && changesCount > 0) {
+    btnSavePyrusEl.textContent = `Сохранить ${lineLabel} (${changesCount})`;
+    btnSavePyrusEl.disabled = false;
+    btnSavePyrusEl.title = `Отправить ${changesCount} изменений вкладки ${lineLabel} в Pyrus`;
   } else if (autoSave.error || changesCount > 0) {
     btnSavePyrusEl.textContent = "Не сохранено — повторить";
     btnSavePyrusEl.classList.add("is-error");
     btnSavePyrusEl.disabled = false;
     btnSavePyrusEl.title = autoSave.error ? String(autoSave.error.message || autoSave.error) : "Есть неотправленные изменения";
+  } else if (!mobile) {
+    btnSavePyrusEl.textContent = `Нет изменений (${lineLabel})`;
+    btnSavePyrusEl.disabled = true;
+    btnSavePyrusEl.title = "Все изменения сохранены в Pyrus";
   } else {
     btnSavePyrusEl.textContent = "✓ Сохранено в Pyrus";
     btnSavePyrusEl.disabled = true;
@@ -2739,7 +2751,8 @@ async function loadInitialData() {
       ShiftColors.renderColorLegend(state.ui.currentLine);
     }
     // Неотправленные правки с прошлого раза — досохранить
-    if (linesWithPendingChanges().length) scheduleAutoSave(500);
+    if (isMobileLayout() && linesWithPendingChanges().length) scheduleAutoSave(500);
+    updateSaveButtonState();
   } catch (err) {
     console.error("loadInitialData error:", err);
   }
@@ -3906,7 +3919,9 @@ function openShiftPopover(context, anchorEl) {
         </label>
 
         <div class="shift-popover-note">
-          Изменения сохраняются в Pyrus автоматически.
+          ${isMobileLayout()
+            ? "Кнопка «Сохранить» сразу отправляет смену в Pyrus."
+            : "Изменения применяются сразу, в Pyrus уходят по кнопке «Сохранить в Pyrus»."}
         </div>
       </div>
     </div>
@@ -4047,7 +4062,7 @@ function openShiftPopover(context, anchorEl) {
     if (commitPopover()) scheduleAutoSave(0);
   });
 
-  // На ПК кнопки сохранения нет: правка применяется сразу и уходит в Pyrus
+  // На ПК кнопки в окне нет: правка применяется сразу, в Pyrus — общей кнопкой «Сохранить в Pyrus»
   if (!isMobileLayout()) {
     shiftPopoverEl
       .querySelectorAll("#shift-start-input, #shift-end-input, #shift-amount-input, #shift-telephony-input")

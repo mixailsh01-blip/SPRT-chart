@@ -37,7 +37,7 @@
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
   </script>
   <!-- Все модули грузятся параллельно, а не цепочкой импортов -->
-  <link rel="modulepreload" href="js/app.js?v=15" />
+  <link rel="modulepreload" href="js/app.js?v=16" />
   <link rel="modulepreload" href="js/config.js?v=7" />
   <link rel="modulepreload" href="js/api/apiClient.js" />
   <link rel="modulepreload" href="js/api/pyrusClient.js" />
@@ -224,8 +224,8 @@
           </div>
 
           <div style="padding: 8px 12px; font-size: 12px; color: var(--text-muted);">
-            Редактировать можно только во вкладке своего подразделения. Изменения сохраняются
-            в Pyrus автоматически.
+            Редактировать можно только во вкладке своего подразделения. Изменения уходят в Pyrus
+            по кнопке «Сохранить» (на телефоне — сразу).
           </div>
 
           <div class="change-log-panel">
@@ -251,7 +251,7 @@
   </div>
 
   <script src="js/shift-colors.js?v=3"></script>
-  <script type="module" src="js/app.js?v=15"></script>
+  <script type="module" src="js/app.js?v=16"></script>
 </body>
 
 </html>
