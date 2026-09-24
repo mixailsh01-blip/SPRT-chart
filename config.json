@@ -1,20 +1,26 @@
 {
   "api": {
-    "baseUrl": "https://CHANGE-ME.n8n/webhook/sprt-chart",
+    "baseUrl": "https://6009071-by70196.twc1.net/webhook/sprt-chart",
     "timeoutMs": 30000
   },
   "auth": {
-    "provider": "mango",
+    "provider": "email",
     "identifier": {
-      "type": "phone",
-      "label": "Телефон",
-      "placeholder": "+7 900 000-00-00"
+      "type": "email",
+      "label": "Email",
+      "placeholder": "name@sprt-service.ru"
     },
     "codeLength": 6,
     "resendTimerSec": 60,
     "permissions": {
       "editAll": [],
       "viewDefault": "all"
+    },
+    "texts": {
+      "hint": "Отправим код на рабочую почту из Pyrus.",
+      "sendLabel": "Получить код",
+      "verifyLabel": "Войти",
+      "changeLabel": "Изменить email"
     }
   },
   "lines": [
@@ -24,7 +30,9 @@
       "departmentName": "ТП",
       "departmentItemId": null,
       "orgDepartmentIds": [],
-      "editRoles": [1329637]
+      "editRoles": [
+        1329637
+      ]
     },
     {
       "key": "PO",
@@ -32,7 +40,9 @@
       "departmentName": "ПО",
       "departmentItemId": null,
       "orgDepartmentIds": [],
-      "editRoles": [1329638]
+      "editRoles": [
+        1329638
+      ]
     }
   ],
   "pyrus": {
