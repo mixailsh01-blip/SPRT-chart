@@ -2,7 +2,7 @@
 // Главный модуль SPA «График смен» (SPRT-chart)
 // Чистый vanilla JS.
 
-import { config, getConfigValue } from "./config.js?v=4";
+import { config, getConfigValue } from "./config.js?v=5";
 import { createApiClient } from "./api/apiClient.js";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
@@ -788,18 +788,23 @@ async function init() {
     const cachedAuth = loadAuthCache();
     if (cachedAuth && applyAuthCache(cachedAuth)) {
       showMainScreen();
-      try {
-        const me = await apiClient.call("auth.me", {});
-        if (me && (me.user || me.roles)) {
-          applyAuthResult({ ...me, sessionToken: state.auth.sessionToken });
-        }
-      } catch (err) {
-        if (err?.status === 401) {
-          handleSessionExpired();
-        } else {
-          console.warn("auth.me недоступен, продолжаем с кешированной сессией", err);
-        }
-      }
+      // Проверка сессии идёт фоном: интерфейс показываем сразу из кеша,
+      // а не ждём ответа бэкенда (раньше это держало пустой экран).
+      apiClient
+        .call("auth.me", {})
+        .then((me) => {
+          if (me && (me.user || me.roles)) {
+            applyAuthResult({ ...me, sessionToken: state.auth.sessionToken });
+            updateSaveButtonState();
+          }
+        })
+        .catch((err) => {
+          if (err?.status === 401) {
+            handleSessionExpired();
+          } else {
+            console.warn("auth.me недоступен, продолжаем с кешированной сессией", err);
+          }
+        });
     } else {
       showLoginScreen();
     }
@@ -2623,9 +2628,12 @@ async function loadInitialData() {
       }
     }
 
-    await loadDepartmentsCatalog();
-    await loadEmployees();
-    await loadShiftsCatalog();
+    // Все запросы стартуют одновременно, а не по очереди.
+    // График и отпуска запрашиваем заранее — reloadScheduleForCurrentMonth возьмёт их из кеша.
+    const monthKey = getMonthKey(year, monthIndex);
+    scheduleService.loadMonthSchedule(monthKey).catch(() => {});
+    vacationsService.getVacationsForMonth(monthKey).catch(() => {});
+    await Promise.all([loadDepartmentsCatalog(), loadEmployees(), loadShiftsCatalog()]);
     initQuickAssignPanel();
     await reloadScheduleForCurrentMonth();
     updateSaveButtonState();
@@ -2682,9 +2690,8 @@ async function loadRoleMembers() {
 }
 
 async function loadEmployees() {
-  const data = await membersService.getMembers();
+  const [data, roleMembers] = await Promise.all([membersService.getMembers(), loadRoleMembers()]);
   const members = membersService.extractMembersFromPyrusData(data) || [];
-  const roleMembers = await loadRoleMembers();
   const employeesByLine = makeByLine(() => []);
 
   for (const m of members) {

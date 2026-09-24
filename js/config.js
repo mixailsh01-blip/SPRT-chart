@@ -164,9 +164,15 @@ const CONFIG_URL = new URL("../config.json", import.meta.url).toString();
 async function loadConfig() {
   let loaded = {};
   try {
-    const response = await fetch(CONFIG_URL, { cache: "no-store" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    loaded = await response.json();
+    // index.html начинает загрузку config.json заранее (window.__configPromise)
+    const early = window.__configPromise;
+    window.__configPromise = null;
+    loaded = early ? await early.catch(() => null) : null;
+    if (!loaded) {
+      const response = await fetch(CONFIG_URL, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      loaded = await response.json();
+    }
   } catch (error) {
     console.error("Не удалось загрузить config.json", error);
   }

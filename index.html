@@ -24,6 +24,23 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/styles.css?v=6" />
+  <script>
+    // Стартуем загрузку config.json сразу, параллельно с модулями
+    window.__configPromise = fetch("config.json", { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
+  </script>
+  <!-- Все модули грузятся параллельно, а не цепочкой импортов -->
+  <link rel="modulepreload" href="js/app.js?v=7" />
+  <link rel="modulepreload" href="js/config.js?v=5" />
+  <link rel="modulepreload" href="js/api/apiClient.js" />
+  <link rel="modulepreload" href="js/api/pyrusClient.js" />
+  <link rel="modulepreload" href="js/utils/logger.js" />
+  <link rel="modulepreload" href="js/cache/requestCache.js" />
+  <link rel="modulepreload" href="js/services/membersService.js" />
+  <link rel="modulepreload" href="js/services/catalogsService.js" />
+  <link rel="modulepreload" href="js/services/vacationsService.js" />
+  <link rel="modulepreload" href="js/services/scheduleService.js?v=6" />
+  <link rel="modulepreload" href="js/services/prodCalendarService.js" />
 </head>
 
 <body class="booting">
@@ -216,7 +233,7 @@
   </div>
 
   <script src="js/shift-colors.js"></script>
-  <script type="module" src="js/app.js?v=6"></script>
+  <script type="module" src="js/app.js?v=7"></script>
 </body>
 
 </html>
