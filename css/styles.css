@@ -3716,10 +3716,21 @@ body.dark-theme {
     border-radius: 50%;
     font-size: 16px;
   }
+  /* Название месяца — кнопка только по ширине текста, чтобы не попадать в неё вместо стрелок */
   #current-month-label {
     font-size: 14px;
-    flex: 1;
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 0;
+    margin: 0 auto;
+    padding: 6px 10px;
     text-align: center;
+  }
+  /* Стрелки крупнее — в них легче попасть пальцем */
+  .month-switcher .btn.toggle {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
   }
 
   /* Таблица занимает высоту по содержимому; при большом числе строк прокручивается внутри */
@@ -3770,4 +3781,27 @@ body.dark-theme {
 }
 .schedule-table thead th.day-workday {
   background-color: var(--table-header-bg);
+}
+
+@media (max-width: 768px) {
+  /* Колонка «Сотрудник» в шапке всегда поверх дат при горизонтальной прокрутке */
+  .schedule-table thead th.sticky-col {
+    position: sticky;
+    left: 0;
+    z-index: 40;
+  }
+  .schedule-table tbody td.sticky-col {
+    z-index: 30;
+  }
+  /* Без масштабирования жестами и двойным тапом */
+  html,
+  body {
+    touch-action: pan-x pan-y;
+  }
+  /* iOS увеличивает страницу при фокусе на поле со шрифтом меньше 16px */
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
