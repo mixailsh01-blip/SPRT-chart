@@ -2208,28 +2208,8 @@ body.legend-open {
   background-color: var(--calendar-preholiday-bg);
 }
 
-:root[data-theme="light"] .schedule-table tr.row-hover td {
-  background-color: #242c3b !important;
-  box-shadow: none;
-}
-
-:root[data-theme="light"] .schedule-table tr.row-hover td.day-weekend {
-  background-color: #2b1638 !important;
-  box-shadow: none;
-}
-
-:root[data-theme="light"] .schedule-table tr.row-hover td.day-holiday {
-  background-color: #12344a !important;
-  box-shadow: none;
-}
-
-:root[data-theme="light"] .schedule-table tr.row-hover td.day-preholiday {
-  background-color: #e6c65c !important;
-  box-shadow: none;
-}
-
+/* Светлая тема: наведённая строка только слегка подсвечивается (раньше заливалась тёмным) */
 :root[data-theme="light"] .schedule-table tr.row-hover td.sticky-col {
-  box-shadow: none;
   background-color: var(--sticky-bg) !important;
   color: var(--text) !important;
 }
