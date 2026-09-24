@@ -2408,10 +2408,20 @@ async function handleSaveToPyrus() {
       year: state.monthMeta.year,
     };
     
-    await apiClient.call("schedule.save", { changes: payload, meta });
+    const saveResult = (await apiClient.call("schedule.save", { changes: payload, meta })) || {};
+    const created = saveResult.created ?? payload.create.task.length;
+    const edited = saveResult.edited ?? payload.edit.task.length;
+    const deleted = saveResult.deleted ?? payload.deleted.task.length;
     showAppToast(
-      `Pyrus: ${LINE_LABELS[currentLine] || currentLine} • создано ${payload.create.task.length}, изменено ${payload.edit.task.length}, удалено ${payload.deleted.task.length}`
+      `Pyrus: ${LINE_LABELS[currentLine] || currentLine} • создано ${created}, изменено ${edited}, удалено ${deleted}`
     );
+    if (Array.isArray(saveResult.errors) && saveResult.errors.length) {
+      console.warn("schedule.save errors", saveResult.errors);
+      alert(
+        `Часть изменений не сохранилась (${saveResult.errors.length}):\n` +
+          saveResult.errors.slice(0, 5).map((e) => `• ${e.op}: ${e.message}`).join("\n")
+      );
+    }
     
     state.originalScheduleByLine[currentLine] = deepClone(state.scheduleByLine[currentLine]);
     
@@ -2879,9 +2889,23 @@ async function reloadScheduleForCurrentMonth() {
 
     if (!dueField || !personField || !shiftField) continue;
 
-    const rawDuration = Number(dueField.duration || 0);
     const startUtcMs = new Date(dueField.value).getTime();
     if (Number.isNaN(startUtcMs)) continue;
+
+    // Pyrus может не вернуть duration у поля «Дата и время смены» —
+    // тогда берём длительность из шаблона смены (колонка «Время работы»).
+    const shiftValueForDuration = shiftField.value || {};
+    const shiftItemIdForDuration =
+      shiftValueForDuration.item_id != null ? shiftValueForDuration.item_id : shiftValueForDuration.id;
+    const templateForDuration =
+      shiftItemIdForDuration != null
+        ? (state.shiftTemplatesByLine.ALL || []).find((t) => t.id === shiftItemIdForDuration)
+        : null;
+    let rawDuration = Number(dueField.duration || 0);
+    if (!(rawDuration > 0) && templateForDuration?.timeRange) {
+      rawDuration =
+        computeDurationMinutes(templateForDuration.timeRange.start, templateForDuration.timeRange.end) || 0;
+    }
 
     const startUtcIso = new Date(startUtcMs).toISOString();
     const endUtcIso = new Date(startUtcMs + rawDuration * 60 * 1000).toISOString();
