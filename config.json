@@ -1,0 +1,81 @@
+{
+  "api": {
+    "baseUrl": "https://CHANGE-ME.n8n/webhook/sprt-chart",
+    "timeoutMs": 30000
+  },
+  "auth": {
+    "provider": "mango",
+    "identifier": {
+      "type": "phone",
+      "label": "Телефон",
+      "placeholder": "+7 900 000-00-00"
+    },
+    "codeLength": 6,
+    "resendTimerSec": 60,
+    "permissions": {
+      "editAll": [],
+      "viewDefault": "all"
+    }
+  },
+  "lines": [
+    {
+      "key": "TP",
+      "label": "ТП",
+      "departmentName": "ТП",
+      "departmentItemId": null,
+      "orgDepartmentIds": [],
+      "editRoles": [1329637]
+    },
+    {
+      "key": "PO",
+      "label": "ПО",
+      "departmentName": "ПО",
+      "departmentItemId": null,
+      "orgDepartmentIds": [],
+      "editRoles": [1329638]
+    }
+  ],
+  "pyrus": {
+    "catalogs": {
+      "shifts": 309671,
+      "departments": 309670
+    },
+    "catalogColumns": {
+      "shifts": {
+        "name": "",
+        "time": "",
+        "amount": "",
+        "departments": ""
+      },
+      "departments": {
+        "name": "Подразделения компании"
+      }
+    },
+    "forms": {
+      "schedule": 2470373,
+      "vacations": 2470368
+    },
+    "fields": {
+      "schedule": {
+        "department": 1,
+        "person": 2,
+        "due": 3,
+        "amount": 4,
+        "template": 5
+      },
+      "vacations": {
+        "period": 1,
+        "year": 2,
+        "person": 3,
+        "department": 4,
+        "days": 5
+      }
+    }
+  },
+  "management": {
+    "topManagementIds": []
+  },
+  "timezone": {
+    "localOffsetMin": 240
+  }
+}

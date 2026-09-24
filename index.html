@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>СПРТ · График смен</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem("sprt_theme_preference");
+        var resolved = theme === "light" ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", resolved);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    })();
+  </script>
+  <style>
+    html { background: #0f1626; color-scheme: dark; }
+    html[data-theme="light"] { background: #f0f0f0; color-scheme: light; }
+  </style>
+  <link rel="stylesheet" href="css/styles.css?v=1" />
+</head>
+
+<body class="booting">
+  <div id="app">
+    <!-- Экран логина -->
+    <div id="login-screen" class="card">
+      <div class="login-brand">
+        <div class="login-portal">СПРТ · График смен</div>
+      </div>
+      <p class="muted">Вход с подтверждением кода.</p>
+
+      <div class="auth-panels">
+        <section class="auth-panel" data-auth-panel="email" role="tabpanel">
+          <p class="muted auth-panel-hint">Отправим код на ваш email для подтверждения.</p>
+
+          <div class="email-auth-step" id="email-step-request">
+            <div class="field">
+              <span>Email</span>
+              <input id="email-input" type="email" autocomplete="email" placeholder="name@company.ru" spellcheck="false" />
+            </div>
+            <button type="button" class="btn primary full-width" id="email-send-button">
+              Получить код
+            </button>
+            <div id="email-request-error" class="error"></div>
+          </div>
+
+          <div class="email-auth-step hidden" id="email-step-code">
+            <div class="email-auth-meta">
+              <span class="email-auth-label">Код отправлен на</span>
+              <span id="email-target-label" class="email-auth-target">—</span>
+              <button type="button" class="btn ghost email-change-button" id="email-change-button">
+                Изменить email
+              </button>
+            </div>
+            <div class="otp-group" id="otp-group" aria-label="Введите код подтверждения">
+              <input class="otp-input" inputmode="numeric" maxlength="1" aria-label="Цифра 1" />
+              <input class="otp-input" inputmode="numeric" maxlength="1" aria-label="Цифра 2" />
+              <input class="otp-input" inputmode="numeric" maxlength="1" aria-label="Цифра 3" />
+              <input class="otp-input" inputmode="numeric" maxlength="1" aria-label="Цифра 4" />
+              <input class="otp-input" inputmode="numeric" maxlength="1" aria-label="Цифра 5" />
+              <input class="otp-input" inputmode="numeric" maxlength="1" aria-label="Цифра 6" />
+            </div>
+            <div class="email-auth-actions">
+              <button type="button" class="btn primary full-width" id="email-verify-button">
+                Подтвердить
+              </button>
+              <button type="button" class="btn ghost full-width" id="email-resend-button">
+                Повторная отправка
+              </button>
+            </div>
+            <div id="email-code-error" class="error"></div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- Основной экран -->
+    <div id="main-screen" class="hidden">
+      <div class="top-bar">
+        <div class="top-bar-left">
+          <h2 id="main-title">График смен</h2>
+          <div id="current-user-label" class="muted"></div>
+        </div>
+
+        <div class="top-bar-right">
+          <button type="button" class="btn toggle" id="btn-theme-toggle">
+            🌙 Тема
+          </button>
+          <button type="button" class="btn toggle" id="btn-logout" title="Сбросить авторизацию">
+            🚪 Выйти
+          </button>
+          <div class="schedule-actions schedule-only">
+            <button type="button" class="btn toggle mobile-only" id="btn-mobile-toolbar">⚙️ Панель смены</button>
+            <button type="button" class="btn toggle mobile-only" id="btn-line-tabs">🏢 Отделы</button>
+            <button type="button" class="btn toggle" id="btn-legend-toggle" aria-controls="shift-legend"
+              aria-expanded="false">
+              🎨 Легенда
+            </button>
+          </div>
+          <div id="line-tabs" class="line-tabs schedule-only"></div>
+
+          <div class="month-switcher schedule-only">
+            <button type="button" class="btn toggle" id="btn-prev-month">
+              &#8249;
+            </button>
+            <button type="button" id="current-month-label" class="month-label-button" aria-label="Выбрать месяц">
+              Месяц
+            </button>
+            <button type="button" class="btn toggle" id="btn-next-month">
+              &#8250;
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="schedule-view">
+        <div class="schedule-container">
+          <div class="schedule-toolbar">
+            <div class="toolbar-group">
+              <label for="quick-template-select">Шаблон смены</label>
+              <select id="quick-template-select"></select>
+            </div>
+
+            <div class="toolbar-group">
+              <label>Время</label>
+              <div class="toolbar-inline">
+                <input id="quick-time-from" type="time" />
+                <span class="toolbar-separator">—</span>
+                <input id="quick-time-to" type="time" />
+              </div>
+            </div>
+
+            <div class="toolbar-group">
+              <label for="quick-amount">Сумма</label>
+              <input id="quick-amount" type="number" min="0" step="100" />
+            </div>
+
+            <div class="toolbar-actions">
+              <button type="button" class="btn toggle mobile-only" id="btn-mobile-toolbar-close">⬇️ Скрыть</button>
+              <button type="button" class="btn toggle" id="quick-mode-toggle">
+                Быстрое назначение
+              </button>
+              <button type="button" class="btn primary ghost" id="btn-save-pyrus">
+                Сохранить в Pyrus
+              </button>
+            </div>
+          </div>
+
+          <div class="schedule-scroll">
+            <div id="schedule-root"></div>
+          </div>
+
+          <!-- Легенда цветов смен (динамически генерируется) -->
+          <div class="shift-legend-backdrop" id="shift-legend-backdrop" aria-hidden="true"></div>
+          <div class="shift-legend shift-legend-hidden" id="shift-legend">
+            <div class="shift-legend-title">Легенда цветов смен</div>
+            <div class="shift-legend-groups" id="shift-legend-content">
+              <!-- Будет заполнено динамически из JavaScript -->
+            </div>
+          </div>
+
+          <div style="padding: 8px 12px; font-size: 12px; color: var(--text-muted);">
+            Редактировать можно только во вкладке своего подразделения. Изменения копятся локально
+            и уходят в Pyrus по кнопке «Сохранить».
+          </div>
+
+          <div class="change-log-panel">
+            <div class="change-log-header">
+              <div>
+                <div class="change-log-title">История изменений</div>
+                <div class="change-log-subtitle">
+                  Сохраняется локально в браузере, фиксируя добавление, правки и удаление.
+                </div>
+              </div>
+              <button type="button" class="btn toggle" id="btn-clear-history">
+                Очистить историю
+              </button>
+            </div>
+            <div id="change-log-list" class="change-log-list">
+              Пока нет локальных изменений
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="js/shift-colors.js"></script>
+  <script type="module" src="js/app.js?v=1"></script>
+</body>
+
+</html>
