@@ -2122,6 +2122,9 @@ function initQuickAssignPanel() {
     resetVacationStart();
     state.quickMode.templateId =
       val && !state.quickMode.deleteMode && !state.quickMode.vacationMode ? Number(val) : null;
+    // Выбор шаблона сразу включает режим — не нужно ещё отдельно нажимать «Быстрое назначение».
+    // Селект доступен только когда есть права (см. updateQuickModeForLine), поэтому здесь их не проверяем.
+    state.quickMode.enabled = Boolean(val);
     updateQuickModeToggleUI();
     updateQuickModeForLine();
     if (state.quickMode.deleteMode || state.quickMode.vacationMode) return;
