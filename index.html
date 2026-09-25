@@ -37,7 +37,7 @@
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
   </script>
   <!-- Все модули грузятся параллельно, а не цепочкой импортов -->
-  <link rel="modulepreload" href="js/app.js?v=20" />
+  <link rel="modulepreload" href="js/app.js?v=21" />
   <link rel="modulepreload" href="js/config.js?v=7" />
   <link rel="modulepreload" href="js/api/apiClient.js?v=2" />
   <link rel="modulepreload" href="js/api/pyrusClient.js" />
@@ -251,7 +251,7 @@
   </div>
 
   <script src="js/shift-colors.js?v=3"></script>
-  <script type="module" src="js/app.js?v=20"></script>
+  <script type="module" src="js/app.js?v=21"></script>
 </body>
 
 </html>

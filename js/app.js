@@ -3213,11 +3213,24 @@ async function reloadScheduleForCurrentMonth({ showCached = false, isRetry = fal
   container?.classList.add("is-loading");
   try {
     await reloadScheduleForCurrentMonthInner();
-    if (isCurrentMonth() && !state.ui.isScheduleCached) {
-      state.ui.scheduleLoadError = null;
-      scheduleRetry.attempt = 0;
-      // Правки, сделанные пока шла загрузка, — отправить (на ПК — по кнопке)
-      if (isMobileLayout() && linesWithPendingChanges().length) scheduleAutoSave(500);
+    if (isCurrentMonth()) {
+      if (!state.ui.isScheduleCached) {
+        state.ui.scheduleLoadError = null;
+        scheduleRetry.attempt = 0;
+        // Правки, сделанные пока шла загрузка, — отправить (на ПК — по кнопке)
+        if (isMobileLayout() && linesWithPendingChanges().length) scheduleAutoSave(500);
+      } else {
+        // Запрос отработал без ошибки, но его результат не применили (например, устарел —
+        // его обогнал более новый запрос). Раньше на этом интерфейс замирал на «Данные
+        // загружаются…» навсегда: ни ошибки, ни повтора. Теперь тоже пробуем ещё раз.
+        const delay =
+          SCHEDULE_RETRY_DELAYS_MS[Math.min(scheduleRetry.attempt, SCHEDULE_RETRY_DELAYS_MS.length - 1)];
+        scheduleRetry.attempt += 1;
+        scheduleRetry.timer = setTimeout(
+          () => reloadScheduleForCurrentMonth({ isRetry: true }),
+          delay
+        );
+      }
     }
   } catch (err) {
     console.error("Не удалось загрузить график", err);
