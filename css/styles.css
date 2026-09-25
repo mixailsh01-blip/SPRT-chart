@@ -3853,11 +3853,16 @@ body.dark-theme {
   cursor: pointer;
 }
 
-/* ===== Быстрое удаление смен ===== */
-#quick-mode-toggle.delete-mode.active {
-  background: #C73A3A;
+/* ===== Быстрое назначение/удаление: статус показывает сам селект «Шаблон смены» ===== */
+#quick-template-select.quick-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+  font-weight: 600;
+}
+#quick-template-select.quick-active.delete-mode {
   border-color: #C73A3A;
-  color: #fff;
+  box-shadow: 0 0 0 2px rgba(199, 58, 58, 0.35);
+  color: #C73A3A;
 }
 body.quick-delete-active .schedule-table td.shift-cell .shift-pill {
   cursor: not-allowed;

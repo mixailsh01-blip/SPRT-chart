@@ -2,7 +2,7 @@
 // Главный модуль SPA «График смен» (SPRT-chart)
 // Чистый vanilla JS.
 
-import { config, getConfigValue } from "./config.js?v=7";
+import { config, getConfigValue } from "./config.js?v=8";
 import { createApiClient } from "./api/apiClient.js?v=2";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
@@ -712,7 +712,6 @@ const quickTemplateSelectEl = $("#quick-template-select");
 const quickTimeFromInputEl = $("#quick-time-from");
 const quickTimeToInputEl = $("#quick-time-to");
 const quickAmountInputEl = $("#quick-amount");
-const quickModeToggleEl = $("#quick-mode-toggle");
 const changeLogListEl = $("#change-log-list");
 const btnClearHistoryEl = $("#btn-clear-history");
 let appToastTimer = null;
@@ -806,7 +805,7 @@ async function init() {
   initTheme();
   loadCurrentLinePreference();
   loadEmployeeFilters();
-  initMonthMetaToToday();
+  if (!loadCurrentMonthPreference()) initMonthMetaToToday();
   bindEmailAuth();
 
   // Автовосстановление сессии: токен проверяет бэкенд (auth.me)
@@ -890,6 +889,39 @@ function updateMonthLabel() {
     "Декабрь",
   ];
   currentMonthLabelEl.textContent = `${monthNames[monthIndex]} ${year}`;
+  persistCurrentMonthPreference();
+}
+
+// Открытый месяц переживает перезагрузку страницы — иначе она каждый раз молча
+// прыгала на текущий календарный месяц и заново грузила график/праздники для него.
+function persistCurrentMonthPreference() {
+  try {
+    localStorage.setItem(
+      STORAGE_KEYS.currentMonth,
+      `${state.monthMeta.year}-${state.monthMeta.monthIndex}`
+    );
+  } catch (_) {
+    // ignore storage quota / privacy mode
+  }
+}
+
+function loadCurrentMonthPreference() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.currentMonth);
+    if (!raw) return false;
+    const [yearStr, monthStr] = raw.split("-");
+    const year = Number(yearStr);
+    const monthIndex = Number(monthStr);
+    if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0 || monthIndex > 11) {
+      return false;
+    }
+    state.monthMeta.year = year;
+    state.monthMeta.monthIndex = monthIndex;
+    updateMonthLabel();
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function createMonthPickerPopover() {
@@ -2155,24 +2187,6 @@ function initQuickAssignPanel() {
     state.quickMode.amount = e.target.value;
   });
 
-  quickModeToggleEl?.addEventListener("click", () => {
-    const currentLine = state.ui.currentLine;
-    const isAll = currentLine === "ALL";
-    const canEdit = isAll ? Boolean(getOwnEditableLineKey()) : canEditLine(currentLine);
-
-    if (!canEdit) {
-      alert(
-        isAll
-          ? "Отпуск себе можно назначить, если вы редактор одной из вкладок (ТП или ПО)"
-          : `У вас нет прав на редактирование линии ${currentLine}`
-      );
-      return;
-    }
-
-    state.quickMode.enabled = !state.quickMode.enabled;
-    resetVacationStart();
-    updateQuickModeToggleUI();
-  });
 
   state.ui.quickPanelBound = true;
 }
@@ -2255,15 +2269,14 @@ function syncQuickPanelInputs() {
   }
 }
 
+// Статус «режим включён» теперь показывает сам селект «Шаблон смены» (подсветкой),
+// отдельной кнопки-переключателя больше нет — выбор шаблона сразу и есть включение.
 function updateQuickModeToggleUI() {
-  if (!quickModeToggleEl) return;
+  if (!quickTemplateSelectEl) return;
   const del = state.quickMode.deleteMode;
-  const vac = state.quickMode.vacationMode;
-  quickModeToggleEl.classList.toggle("active", state.quickMode.enabled);
-  quickModeToggleEl.classList.toggle("delete-mode", del);
+  quickTemplateSelectEl.classList.toggle("quick-active", state.quickMode.enabled);
+  quickTemplateSelectEl.classList.toggle("delete-mode", state.quickMode.enabled && del);
   document.body.classList.toggle("quick-delete-active", state.quickMode.enabled && del);
-  const label = del ? "Быстрое удаление" : vac ? "Назначить отпуск" : "Быстрое назначение";
-  quickModeToggleEl.textContent = state.quickMode.enabled ? `${label}: Вкл` : label;
 }
 
 function updateQuickModeForLine() {
@@ -2284,21 +2297,17 @@ function updateQuickModeForLine() {
     updateQuickModeToggleUI();
   }
 
-  if (quickModeToggleEl) {
-    quickModeToggleEl.disabled = !canEdit;
-    quickModeToggleEl.title = canEdit
+  if (quickTemplateSelectEl) {
+    quickTemplateSelectEl.disabled = !canEdit;
+    quickTemplateSelectEl.title = canEdit
       ? isAll
         ? "Назначить отпуск самому себе"
-        : "Включить быстрое назначение смен"
+        : "Выберите шаблон, чтобы включить быстрое назначение"
       : isCached
       ? "Данные загружаются, редактирование временно недоступно"
       : isAll
       ? "Отпуск себе можно назначить, если вы редактор одной из вкладок (ТП или ПО)"
       : `Нет прав на редактирование ${lineLabel}`;
-  }
-  
-  if (quickTemplateSelectEl) {
-    quickTemplateSelectEl.disabled = !canEdit;
   }
   
   const noTimes = !canEdit || state.quickMode.deleteMode || state.quickMode.vacationMode;

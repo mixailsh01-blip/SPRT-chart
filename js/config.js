@@ -61,6 +61,7 @@ const DEFAULT_CONFIG = {
       cachedShiftTemplates: "sprt_cached_shift_templates",
       cachedSchedulePrefix: "sprt_cached_schedule_",
       shiftDrafts: "sprt_shift_drafts_v1",
+      currentMonth: "sprt_current_month",
     },
     auth: {
       key: "sprt_auth_v1",
