@@ -325,6 +325,22 @@ function canViewLine(line) {
   return permission === "view" || permission === "edit";
 }
 
+// Свой отдел (ТП или ПО) — вкладка, где у пользователя есть право редактировать.
+// Нужно, чтобы во вкладке «ВСЕ» можно было назначить отпуск самому себе: сам отпуск
+// пишется в Pyrus с конкретным отделом, а не «ВСЕ» (её как отдела не существует).
+// Если прав нет ни на одну вкладку или сразу на обе — самообслуживание недоступно
+// (во втором случае непонятно, какой отдел указывать, и это редкий случай руководителя).
+function getOwnEditableLineKey() {
+  if (state.auth.user?.id == null) return null;
+  const editable = LINE_KEYS.filter((key) => state.auth.permissions[key] === "edit");
+  return editable.length === 1 ? editable[0] : null;
+}
+
+function isOwnEmployeeId(employeeId) {
+  const myId = state.auth.user?.id;
+  return myId != null && employeeId != null && Number(myId) === Number(employeeId);
+}
+
 
 // -----------------------------
 // Персистентная авторизация (localStorage + cookie)
@@ -2138,12 +2154,18 @@ function initQuickAssignPanel() {
 
   quickModeToggleEl?.addEventListener("click", () => {
     const currentLine = state.ui.currentLine;
+    const isAll = currentLine === "ALL";
+    const canEdit = isAll ? Boolean(getOwnEditableLineKey()) : canEditLine(currentLine);
 
-    if (!canEditLine(currentLine)) {
-      alert(`У вас нет прав на редактирование линии ${currentLine}`);
+    if (!canEdit) {
+      alert(
+        isAll
+          ? "Отпуск себе можно назначить, если вы редактор одной из вкладок (ТП или ПО)"
+          : `У вас нет прав на редактирование линии ${currentLine}`
+      );
       return;
     }
-    
+
     state.quickMode.enabled = !state.quickMode.enabled;
     resetVacationStart();
     updateQuickModeToggleUI();
@@ -2158,7 +2180,10 @@ const QUICK_VACATION_VALUE = "__vacation__";
 function renderQuickTemplateOptions() {
   if (!quickTemplateSelectEl) return;
 
-  const currentLineTemplates = getCurrentLineTemplates();
+  const isAll = state.ui.currentLine === "ALL";
+  // Во вкладке «ВСЕ» нет собственного отдела — обычные шаблоны смен там ничего не решают
+  // (сохранение всё равно заблокировано), показываем только «Отпуск себе» и его удаление.
+  const currentLineTemplates = isAll ? [] : getCurrentLineTemplates();
   const prevSelected = state.quickMode.templateId;
 
   quickTemplateSelectEl.innerHTML = "";
@@ -2177,12 +2202,15 @@ function renderQuickTemplateOptions() {
     quickTemplateSelectEl.appendChild(option);
   });
 
-  // Отпуск ставится только во вкладке подразделения (он записывается с отделом ТП/ПО)
-  const canVacation = state.ui.currentLine !== "ALL";
+  // Отпуск пишется в Pyrus с конкретным отделом (ТП/ПО). Во вкладке подразделения —
+  // любому сотруднику вкладки; во «ВСЕ» — только самому себе, и только если у вас есть
+  // редакторские права ровно на одну из вкладок (иначе непонятно, какой отдел указать).
+  const ownLine = getOwnEditableLineKey();
+  const canVacation = isAll ? Boolean(ownLine) : true;
   if (canVacation) {
     const vacOption = document.createElement("option");
     vacOption.value = QUICK_VACATION_VALUE;
-    vacOption.textContent = "🏖 Отпуск";
+    vacOption.textContent = isAll ? "🏖 Отпуск (себе)" : "🏖 Отпуск";
     quickTemplateSelectEl.appendChild(vacOption);
   } else if (state.quickMode.vacationMode) {
     state.quickMode.vacationMode = false;
@@ -2191,7 +2219,7 @@ function renderQuickTemplateOptions() {
 
   const delOption = document.createElement("option");
   delOption.value = QUICK_DELETE_VALUE;
-  delOption.textContent = "🗑 Удалить смену / отпуск";
+  delOption.textContent = isAll ? "🗑 Удалить свой отпуск" : "🗑 Удалить смену / отпуск";
   quickTemplateSelectEl.appendChild(delOption);
 
   const hasPrev = currentLineTemplates.some((t) => t.id === prevSelected);
@@ -2238,20 +2266,31 @@ function updateQuickModeToggleUI() {
 function updateQuickModeForLine() {
   const currentLine = state.ui.currentLine;
   const lineLabel = LINE_LABELS[currentLine] || currentLine;
-  const canEdit = canEditLine(currentLine);
+  const isAll = currentLine === "ALL";
+  const ownLine = getOwnEditableLineKey();
+  // Во «ВСЕ» обычного редактирования нет — только отпуск себе (см. renderQuickTemplateOptions)
+  const canEdit = isAll ? Boolean(ownLine) : canEditLine(currentLine);
   const isCached = state.ui.isScheduleCached;
-  
+
   if (!canEdit && state.quickMode.enabled) {
     state.quickMode.enabled = false;
     updateQuickModeToggleUI();
   }
-  
+  if (isAll && state.quickMode.enabled && !state.quickMode.vacationMode && !state.quickMode.deleteMode) {
+    state.quickMode.enabled = false;
+    updateQuickModeToggleUI();
+  }
+
   if (quickModeToggleEl) {
     quickModeToggleEl.disabled = !canEdit;
-    quickModeToggleEl.title = canEdit 
-      ? "Включить быстрое назначение смен"
+    quickModeToggleEl.title = canEdit
+      ? isAll
+        ? "Назначить отпуск самому себе"
+        : "Включить быстрое назначение смен"
       : isCached
       ? "Данные загружаются, редактирование временно недоступно"
+      : isAll
+      ? "Отпуск себе можно назначить, если вы редактор одной из вкладок (ТП или ПО)"
       : `Нет прав на редактирование ${lineLabel}`;
   }
   
@@ -2687,10 +2726,13 @@ function formatDateRu(year, monthIndex, day) {
   return `${String(day).padStart(2, "0")}.${String(monthIndex + 1).padStart(2, "0")}.${year}`;
 }
 
-// Удалять с сайта можно отпуск своего отдела (как и смены — только во вкладке с правами)
-function canDeleteVacation(line, vac) {
-  if (!vac || vac.taskId == null || line === "ALL" || !canEditLine(line)) return false;
-  const deptName = String(LINE_BY_KEY[line]?.departmentName || LINE_LABELS[line] || "").trim().toUpperCase();
+// Удалять с сайта можно отпуск своего отдела (как и смены — только во вкладке с правами).
+// Во «ВСЕ» отдела нет — там можно удалить только свой собственный отпуск.
+function canDeleteVacation(line, vac, employeeId) {
+  if (!vac || vac.taskId == null) return false;
+  const targetLine = line === "ALL" ? (isOwnEmployeeId(employeeId) ? getOwnEditableLineKey() : null) : line;
+  if (!targetLine || (line !== "ALL" && !canEditLine(targetLine))) return false;
+  const deptName = String(LINE_BY_KEY[targetLine]?.departmentName || LINE_LABELS[targetLine] || "").trim().toUpperCase();
   return String(vac.department || "").trim().toUpperCase() === deptName;
 }
 
@@ -2722,10 +2764,17 @@ function handleVacationRangeClick({ line, row, day }) {
   }
   state.quickMode.vacationStart = null;
   renderScheduleCurrentLine();
-  createVacationForRange(line, row, Math.min(start.day, day), Math.max(start.day, day));
+  // Во «ВСЕ» отдела для записи в Pyrus нет — берём собственный (сюда попадаем,
+  // только если он определён однозначно, см. renderQuickTemplateOptions/updateQuickModeForLine)
+  const submitLine = line === "ALL" ? getOwnEditableLineKey() : line;
+  if (!submitLine) {
+    alert("Не удалось определить ваш отдел для отпуска. Поставьте его во вкладке своего подразделения.");
+    return;
+  }
+  createVacationForRange(line, row, Math.min(start.day, day), Math.max(start.day, day), submitLine);
 }
 
-async function createVacationForRange(line, row, firstDay, lastDay) {
+async function createVacationForRange(line, row, firstDay, lastDay, submitLine = line) {
   const { year, monthIndex } = state.monthMeta;
   const sched = state.scheduleByLine[line];
   const days = sched?.days || [];
@@ -2760,7 +2809,7 @@ async function createVacationForRange(line, row, firstDay, lastDay) {
       employee_id: row.employeeId,
       start_date: `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(firstDay).padStart(2, "0")}`,
       days: count,
-      line,
+      line: submitLine,
     });
     vacationsService.applyCreated(result && result.task);
   } catch (err) {
@@ -2785,6 +2834,20 @@ async function confirmAndDeleteVacation(row, vac) {
 }
 
 function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
+  // Вкладка «ВСЕ»: обычного редактирования нет, но себе можно назначить отпуск
+  // (см. renderQuickTemplateOptions/updateQuickModeForLine — режим доступен только тогда,
+  // когда отдел определяется однозначно). Чужие строки во «ВСЕ» остаются read-only ниже.
+  if (
+    line === "ALL" &&
+    state.quickMode.enabled &&
+    state.quickMode.vacationMode &&
+    isOwnEmployeeId(row.employeeId) &&
+    getOwnEditableLineKey()
+  ) {
+    handleVacationRangeClick({ line, row, day });
+    return;
+  }
+
   if (!canEditLine(line)) {
     openShiftPopoverReadOnly(
       {
@@ -3662,7 +3725,7 @@ th1.appendChild(th1Label);
 
         td.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          if (state.quickMode.enabled && state.quickMode.deleteMode && canDeleteVacation(line, vac)) {
+          if (state.quickMode.enabled && state.quickMode.deleteMode && canDeleteVacation(line, vac, row.employeeId)) {
             confirmAndDeleteVacation(row, vac);
             return;
           }
@@ -3971,7 +4034,7 @@ function openBirthdayPopover(context, anchorEl) {
 
 function openVacationPopover(context, anchorEl) {
   const { line, row, vac, employeeName, startLabel, endLabel } = context;
-  const canDelete = canDeleteVacation(line, vac);
+  const canDelete = canDeleteVacation(line, vac, row.employeeId);
   const note = canDelete
     ? "Отпуск хранится в Pyrus («График отпусков»). Удаление сразу уходит в Pyrus."
     : "Отпуск загружается из Pyrus («График отпусков»). Изменить его можно во вкладке его отдела или в Pyrus.";
