@@ -3,11 +3,11 @@
 // Чистый vanilla JS.
 
 import { config, getConfigValue } from "./config.js?v=7";
-import { createApiClient } from "./api/apiClient.js";
+import { createApiClient } from "./api/apiClient.js?v=2";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
-import { createVacationsService } from "./services/vacationsService.js?v=2";
+import { createVacationsService } from "./services/vacationsService.js?v=3";
 import { createScheduleService } from "./services/scheduleService.js?v=7";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=2";
 
@@ -192,6 +192,8 @@ const state = {
   quickMode: {
     enabled: false,
     deleteMode: false, // в «Шаблоне смены» выбрано «Удалить смену»: клик по ячейке стирает смену
+    vacationMode: false, // выбрано «Отпуск»: клик по первому дню, затем по последнему
+    vacationStart: null, // { line, employeeId, day } — первый выбранный день отпуска
     templateId: null,
     timeFrom: "",
     timeTo: "",
@@ -2100,10 +2102,13 @@ function initQuickAssignPanel() {
   quickTemplateSelectEl?.addEventListener("change", () => {
     const val = quickTemplateSelectEl.value;
     state.quickMode.deleteMode = val === QUICK_DELETE_VALUE;
-    state.quickMode.templateId = val && !state.quickMode.deleteMode ? Number(val) : null;
+    state.quickMode.vacationMode = val === QUICK_VACATION_VALUE;
+    resetVacationStart();
+    state.quickMode.templateId =
+      val && !state.quickMode.deleteMode && !state.quickMode.vacationMode ? Number(val) : null;
     updateQuickModeToggleUI();
     updateQuickModeForLine();
-    if (state.quickMode.deleteMode) return;
+    if (state.quickMode.deleteMode || state.quickMode.vacationMode) return;
 
     const tmpl = getCurrentLineTemplates().find(
       (t) => t.id === state.quickMode.templateId
@@ -2140,6 +2145,7 @@ function initQuickAssignPanel() {
     }
     
     state.quickMode.enabled = !state.quickMode.enabled;
+    resetVacationStart();
     updateQuickModeToggleUI();
   });
 
@@ -2147,6 +2153,7 @@ function initQuickAssignPanel() {
 }
 
 const QUICK_DELETE_VALUE = "__delete__";
+const QUICK_VACATION_VALUE = "__vacation__";
 
 function renderQuickTemplateOptions() {
   if (!quickTemplateSelectEl) return;
@@ -2170,12 +2177,29 @@ function renderQuickTemplateOptions() {
     quickTemplateSelectEl.appendChild(option);
   });
 
+  // Отпуск ставится только во вкладке подразделения (он записывается с отделом ТП/ПО)
+  const canVacation = state.ui.currentLine !== "ALL";
+  if (canVacation) {
+    const vacOption = document.createElement("option");
+    vacOption.value = QUICK_VACATION_VALUE;
+    vacOption.textContent = "🏖 Отпуск";
+    quickTemplateSelectEl.appendChild(vacOption);
+  } else if (state.quickMode.vacationMode) {
+    state.quickMode.vacationMode = false;
+    resetVacationStart();
+  }
+
   const delOption = document.createElement("option");
   delOption.value = QUICK_DELETE_VALUE;
-  delOption.textContent = "🗑 Удалить смену";
+  delOption.textContent = "🗑 Удалить смену / отпуск";
   quickTemplateSelectEl.appendChild(delOption);
 
   const hasPrev = currentLineTemplates.some((t) => t.id === prevSelected);
+  if (state.quickMode.vacationMode) {
+    quickTemplateSelectEl.value = QUICK_VACATION_VALUE;
+    state.quickMode.templateId = null;
+    return;
+  }
   if (state.quickMode.deleteMode) {
     quickTemplateSelectEl.value = QUICK_DELETE_VALUE;
     state.quickMode.templateId = null;
@@ -2203,12 +2227,12 @@ function syncQuickPanelInputs() {
 function updateQuickModeToggleUI() {
   if (!quickModeToggleEl) return;
   const del = state.quickMode.deleteMode;
+  const vac = state.quickMode.vacationMode;
   quickModeToggleEl.classList.toggle("active", state.quickMode.enabled);
   quickModeToggleEl.classList.toggle("delete-mode", del);
   document.body.classList.toggle("quick-delete-active", state.quickMode.enabled && del);
-  quickModeToggleEl.textContent = state.quickMode.enabled
-    ? del ? "Быстрое удаление: Вкл" : "Быстрое назначение: Вкл"
-    : del ? "Быстрое удаление" : "Быстрое назначение";
+  const label = del ? "Быстрое удаление" : vac ? "Назначить отпуск" : "Быстрое назначение";
+  quickModeToggleEl.textContent = state.quickMode.enabled ? `${label}: Вкл` : label;
 }
 
 function updateQuickModeForLine() {
@@ -2235,7 +2259,7 @@ function updateQuickModeForLine() {
     quickTemplateSelectEl.disabled = !canEdit;
   }
   
-  const noTimes = !canEdit || state.quickMode.deleteMode;
+  const noTimes = !canEdit || state.quickMode.deleteMode || state.quickMode.vacationMode;
   if (quickTimeFromInputEl) {
     quickTimeFromInputEl.disabled = noTimes;
   }
@@ -2649,6 +2673,117 @@ function renderChangeLog() {
   });
 }
 
+// -----------------------------
+// Отпуска: создание и удаление (форма Pyrus «График отпусков», сразу, без кнопки «Сохранить»)
+// -----------------------------
+
+function resetVacationStart() {
+  if (!state.quickMode.vacationStart) return;
+  state.quickMode.vacationStart = null;
+  if (state.scheduleByLine[state.ui.currentLine]) renderScheduleCurrentLine();
+}
+
+function formatDateRu(year, monthIndex, day) {
+  return `${String(day).padStart(2, "0")}.${String(monthIndex + 1).padStart(2, "0")}.${year}`;
+}
+
+// Удалять с сайта можно отпуск своего отдела (как и смены — только во вкладке с правами)
+function canDeleteVacation(line, vac) {
+  if (!vac || vac.taskId == null || line === "ALL" || !canEditLine(line)) return false;
+  const deptName = String(LINE_BY_KEY[line]?.departmentName || LINE_LABELS[line] || "").trim().toUpperCase();
+  return String(vac.department || "").trim().toUpperCase() === deptName;
+}
+
+async function refreshVacationsForCurrentMonth() {
+  const { year, monthIndex } = state.monthMeta;
+  const monthKey = getMonthKey(year, monthIndex);
+  try {
+    const data = await vacationsService.getVacationsForMonth(monthKey);
+    if (monthKey !== getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex)) return;
+    state.vacationsByEmployee = data || {};
+    persistCachedScheduleForMonth(year, monthIndex);
+  } catch (err) {
+    console.warn("Не удалось обновить отпуска", err);
+  }
+  renderScheduleCurrentLine();
+}
+
+function handleVacationRangeClick({ line, row, day }) {
+  if (state.ui.isScheduleCached) {
+    alert("Дождитесь загрузки свежего графика из Pyrus — без него нельзя проверить смены в периоде отпуска.");
+    return;
+  }
+  const start = state.quickMode.vacationStart;
+  if (!start || start.line !== line || start.employeeId !== row.employeeId) {
+    // Первый клик — начало отпуска
+    state.quickMode.vacationStart = { line, employeeId: row.employeeId, day };
+    renderScheduleCurrentLine();
+    return;
+  }
+  state.quickMode.vacationStart = null;
+  renderScheduleCurrentLine();
+  createVacationForRange(line, row, Math.min(start.day, day), Math.max(start.day, day));
+}
+
+async function createVacationForRange(line, row, firstDay, lastDay) {
+  const { year, monthIndex } = state.monthMeta;
+  const sched = state.scheduleByLine[line];
+  const days = sched?.days || [];
+
+  // В периоде не должно быть смен (с учётом несохранённых правок) и других отпусков
+  const shiftDays = [];
+  days.forEach((d, idx) => {
+    if (d >= firstDay && d <= lastDay && row.shiftsByDay[idx]) shiftDays.push(d);
+  });
+  if (shiftDays.length) {
+    alert(
+      `В период отпуска у сотрудника есть смены: ${shiftDays.join(", ")} число.\n` +
+        "Сначала удалите их (и сохраните), затем поставьте отпуск."
+    );
+    return;
+  }
+  const overlapping = (state.vacationsByEmployee[row.employeeId] || []).find(
+    (v) => v.startDay <= lastDay && (v.endDayExclusive || v.startDay + 1) > firstDay
+  );
+  if (overlapping) {
+    alert(`Период пересекается с отпуском ${overlapping.startLabel} – ${overlapping.endLabel}.`);
+    return;
+  }
+
+  const count = lastDay - firstDay + 1;
+  const fromLabel = formatDateRu(year, monthIndex, firstDay);
+  const toLabel = formatDateRu(year, monthIndex, lastDay);
+  if (!confirm(`Добавить отпуск в Pyrus?\n\n${row.employeeName}\nс ${fromLabel} по ${toLabel} (${count} дн.)`)) return;
+
+  try {
+    const result = await apiClient.call("vacation.create", {
+      employee_id: row.employeeId,
+      start_date: `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(firstDay).padStart(2, "0")}`,
+      days: count,
+      line,
+    });
+    vacationsService.applyCreated(result && result.task);
+  } catch (err) {
+    console.error("vacation.create error", err);
+    alert(`Не удалось добавить отпуск: ${err.message || err}`);
+    return;
+  }
+  await refreshVacationsForCurrentMonth();
+}
+
+async function confirmAndDeleteVacation(row, vac) {
+  if (!confirm(`Удалить отпуск из Pyrus?\n\n${row.employeeName}\nс ${vac.startLabel} по ${vac.endLabel}`)) return;
+  try {
+    await apiClient.call("vacation.delete", { task_id: vac.taskId });
+    vacationsService.applyDeleted(vac.taskId);
+  } catch (err) {
+    console.error("vacation.delete error", err);
+    alert(`Не удалось удалить отпуск: ${err.message || err}`);
+    return;
+  }
+  await refreshVacationsForCurrentMonth();
+}
+
 function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
   if (!canEditLine(line)) {
     openShiftPopoverReadOnly(
@@ -2661,6 +2796,11 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
       },
       cellEl
     );
+    return;
+  }
+
+  if (state.quickMode.enabled && state.quickMode.vacationMode) {
+    handleVacationRangeClick({ line, row, day });
     return;
   }
 
@@ -3522,8 +3662,15 @@ th1.appendChild(th1Label);
 
         td.addEventListener("click", (ev) => {
           ev.stopPropagation();
+          if (state.quickMode.enabled && state.quickMode.deleteMode && canDeleteVacation(line, vac)) {
+            confirmAndDeleteVacation(row, vac);
+            return;
+          }
           openVacationPopover(
             {
+              line,
+              row,
+              vac,
               employeeName: row.employeeName,
               startLabel: vac.startLabel,
               endLabel: vac.endLabel,
@@ -3548,6 +3695,11 @@ th1.appendChild(th1Label);
 
       const td = document.createElement("td");
       td.className = "shift-cell";
+      const vs = state.quickMode.vacationStart;
+      if (vs && vs.line === line && vs.employeeId === row.employeeId && vs.day === dayNumber) {
+        td.classList.add("vacation-start-pending");
+        td.title = "Начало отпуска — кликните последний день";
+      }
       const dayKind = dayKindByDay[dayNumber];
       if (dayKind) {
         td.classList.add(`day-${dayKind}`);
@@ -3818,13 +3970,17 @@ function openBirthdayPopover(context, anchorEl) {
 
 
 function openVacationPopover(context, anchorEl) {
-  const { employeeName, startLabel, endLabel } = context;
+  const { line, row, vac, employeeName, startLabel, endLabel } = context;
+  const canDelete = canDeleteVacation(line, vac);
+  const note = canDelete
+    ? "Отпуск хранится в Pyrus («График отпусков»). Удаление сразу уходит в Pyrus."
+    : "Отпуск загружается из Pyrus («График отпусков»). Изменить его можно во вкладке его отдела или в Pyrus.";
 
   shiftPopoverEl.innerHTML = `
     <div class="shift-popover-header">
       <div>
         <div class="shift-popover-title">${employeeName}</div>
-        <div class="shift-popover-subtitle">Отпуск • только просмотр</div>
+        <div class="shift-popover-subtitle">Отпуск${canDelete ? "" : " • только просмотр"}</div>
       </div>
       <button class="shift-popover-close" type="button">✕</button>
     </div>
@@ -3835,10 +3991,11 @@ function openVacationPopover(context, anchorEl) {
         <div class="field-row"><label>с:</label><div>${startLabel}</div></div>
         <div class="field-row"><label>по:</label><div>${endLabel}</div></div>
       </div>
-      <div class="shift-popover-note">Отпуск загружается из внешней системы и не редактируется здесь.</div>
+      <div class="shift-popover-note">${note}</div>
     </div>
 
     <div class="shift-popover-footer">
+      ${canDelete ? '<button class="btn btn-danger" type="button" id="shift-btn-delete-vacation">Удалить отпуск</button>' : ""}
       <button class="btn" type="button" id="shift-btn-close-vacation">Закрыть</button>
     </div>
   `;
@@ -3849,8 +4006,15 @@ function openVacationPopover(context, anchorEl) {
 
   const closeBtn = shiftPopoverEl.querySelector(".shift-popover-close");
   const closeBtn2 = shiftPopoverEl.querySelector("#shift-btn-close-vacation");
+  const deleteBtn = shiftPopoverEl.querySelector("#shift-btn-delete-vacation");
 
   const doClose = () => closeShiftPopover();
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", () => {
+      doClose();
+      confirmAndDeleteVacation(row, vac);
+    });
+  }
   if (closeBtn) closeBtn.addEventListener("click", doClose);
   if (closeBtn2) closeBtn2.addEventListener("click", doClose);
 

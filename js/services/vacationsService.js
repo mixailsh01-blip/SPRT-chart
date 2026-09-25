@@ -1,7 +1,11 @@
-import { cached, peekCache } from "../cache/requestCache.js";
+import { cached, peekCache, invalidateByPrefix } from "../cache/requestCache.js";
 import { unwrapPyrusData } from "../api/pyrusClient.js";
 
 const DEFAULT_VACATIONS_TTL_MS = 3 * 60 * 60 * 1000; // 3h
+// Реестр Pyrus обновляется с задержкой: созданные/удалённые с сайта отпуска
+// держим поверх реестра, пока он не догонит.
+const RECENT_WRITES_TTL_MS = 5 * 60_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function parseMonthKey(monthKey) {
   const [yearStr, monthStr] = String(monthKey).split("-");
@@ -24,6 +28,39 @@ export function createVacationsService({
     throw new Error("pyrusClient is required for vacationsService");
   }
 
+  const recentUpserts = new Map(); // task_id -> { task, at }
+  const recentDeletes = new Map(); // task_id -> at
+
+  function withRecentWrites(tasks) {
+    const border = Date.now() - RECENT_WRITES_TTL_MS;
+    for (const [id, v] of recentUpserts) if (v.at < border) recentUpserts.delete(id);
+    for (const [id, at] of recentDeletes) if (at < border) recentDeletes.delete(id);
+    if (!recentUpserts.size && !recentDeletes.size) return tasks;
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    for (const [id, { task }] of recentUpserts) if (!byId.has(id)) byId.set(id, task);
+    for (const id of recentDeletes.keys()) byId.delete(id);
+    return [...byId.values()];
+  }
+
+  function invalidateAll() {
+    invalidateByPrefix("pyrus:vacations:");
+  }
+
+  // Результат vacation.create / vacation.delete — показываем сразу, не дожидаясь реестра
+  function applyCreated(task) {
+    if (!task || task.id == null) return;
+    recentUpserts.set(task.id, { task, at: Date.now() });
+    recentDeletes.delete(task.id);
+    invalidateAll();
+  }
+
+  function applyDeleted(taskId) {
+    if (taskId == null) return;
+    recentDeletes.set(taskId, Date.now());
+    recentUpserts.delete(taskId);
+    invalidateAll();
+  }
+
   async function getVacationsForMonth(monthKey, { force } = {}) {
     const { year, monthIndex } = parseMonthKey(monthKey);
 
@@ -38,7 +75,7 @@ export function createVacationsService({
         );
         const data = unwrapPyrusData(raw);
         const wrapper = Array.isArray(data) ? data[0] : data;
-        const tasks = (wrapper && wrapper.tasks) || [];
+        const tasks = withRecentWrites((wrapper && wrapper.tasks) || []);
 
         const vacationsByEmployee = Object.create(null);
         const offsetMs = Number(timezoneOffsetMin || 0) * 60 * 1000;
@@ -79,30 +116,47 @@ export function createVacationsService({
           );
           const daysField = fieldIds?.days != null ? fields.find((f) => f && f.id === fieldIds.days) : null;
           const yearField = fieldIds?.year != null ? fields.find((f) => f && f.id === fieldIds.year) : null;
+          const deptField =
+            fieldIds?.department != null ? fields.find((f) => f && f.id === fieldIds.department) : null;
           if (!personField || !periodField) continue;
 
           const empId = personField.value && personField.value.id;
           if (!empId) continue;
 
           const startIso = periodField.value;
-          let durationMin = Number(periodField.duration || 0);
+          const periodDurationMin = Number(periodField.duration || 0);
+          let durationMin = periodDurationMin;
           if (!durationMin && daysField && Number(daysField.value) > 0) {
             durationMin = Number(daysField.value) * 24 * 60;
           }
-          if (!startIso || !durationMin) continue;
+          if (!startIso) continue;
+          const daysCount = daysField && Number(daysField.value) > 0 ? Number(daysField.value) : 0;
 
           // due_date приходит как "YYYY-MM-DD" (локальная дата, без сдвига),
           // due_date_time — как ISO в UTC (сдвигаем в бизнес-часовой пояс).
+          // Период в днях (так его создаёт Pyrus и сайт): "YYYY-MM-DDT00:00:00Z" — дата без времени.
+          // Длину берём из «Кол-во дней»; без него — из duration
+          // (у due_date_time это «последний день − первый», у due_date — длина целиком).
           let startShiftedMs;
-          if (/^\d{4}-\d{2}-\d{2}$/.test(String(startIso))) {
-            const [yy, mm, dd] = String(startIso).split("-").map(Number);
+          let endShiftedMs;
+          const dateOnly = String(startIso).match(/^(\d{4})-(\d{2})-(\d{2})(T00:00:00(?:\.000)?Z)?$/);
+          if (dateOnly && (daysCount > 0 || dateOnly[4])) {
+            const [yy, mm, dd] = dateOnly.slice(1, 4).map(Number);
             startShiftedMs = Date.UTC(yy, mm - 1, dd, 0, 0, 0, 0);
+            const lengthDays = daysCount > 0 ? daysCount : Math.floor(periodDurationMin / 1440) + 1;
+            endShiftedMs = startShiftedMs + lengthDays * DAY_MS;
+          } else if (dateOnly) {
+            if (!durationMin) continue;
+            const [yy, mm, dd] = dateOnly.slice(1, 4).map(Number);
+            startShiftedMs = Date.UTC(yy, mm - 1, dd, 0, 0, 0, 0);
+            endShiftedMs = startShiftedMs + durationMin * 60 * 1000;
           } else {
+            if (!durationMin) continue;
             const startUtcMs = new Date(startIso).getTime();
             if (Number.isNaN(startUtcMs)) continue;
             startShiftedMs = startUtcMs + offsetMs;
+            endShiftedMs = startShiftedMs + durationMin * 60 * 1000;
           }
-          const endShiftedMs = startShiftedMs + durationMin * 60 * 1000;
 
           const segStart = Math.max(startShiftedMs, monthStartShiftedMs);
           const segEnd = Math.min(endShiftedMs, monthEndShiftedMs);
@@ -125,6 +179,8 @@ export function createVacationsService({
           if (isMidnight(endShiftedMs)) endLabelShiftedMs = endShiftedMs - 1;
 
           (vacationsByEmployee[empId] = vacationsByEmployee[empId] || []).push({
+            taskId: task.id ?? null,
+            department: String(deptField?.value?.choice_names?.[0] ?? "").trim(),
             startDay,
             endDayExclusive,
             startLabel: fmt(startShiftedMs),
@@ -150,5 +206,5 @@ export function createVacationsService({
     return entry && entry.value ? entry.value : null;
   }
 
-  return { getVacationsForMonth, peekVacationsForMonth };
+  return { getVacationsForMonth, peekVacationsForMonth, applyCreated, applyDeleted };
 }

@@ -55,6 +55,7 @@ const vacations = [
       { id: V.period, type: "due_date", value: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-20`, duration: 5 * 1440 },
       { id: V.year, type: "text", value: String(now.getUTCFullYear()) },
       { id: V.person, type: "person", value: { id: 2 } },
+      { id: V.department, type: "multiple_choice", value: { choice_ids: [1], choice_names: ["ТП"] } },
       { id: V.days, type: "number", value: 5 },
     ],
   },
@@ -129,6 +130,31 @@ async function handleApi(req, res) {
   if (action === "schedule.save") {
     console.log("schedule.save", JSON.stringify(payload, null, 2));
     return ok(res, { created: payload.changes.create.task.length, edited: payload.changes.edit.task.length, deleted: payload.changes.deleted.task.length });
+  }
+  if (action === "vacation.create") {
+    const { employee_id, start_date, days, line } = payload;
+    if (!(ROLES_BY_MEMBER[session] || []).includes(line === "PO" ? 1329638 : 1329637))
+      return fail(res, 403, "FORBIDDEN", "Нет прав на отдел");
+    const task = {
+      id: nextTaskId++,
+      fields: [
+        { id: V.period, type: "due_date_time", value: `${start_date}T00:00:00Z`, ...(days > 1 ? { duration: (days - 1) * 1440 } : {}) },
+        { id: V.year, type: "text", value: start_date.slice(0, 4) },
+        { id: V.person, type: "person", value: { id: employee_id } },
+        { id: V.department, type: "multiple_choice", value: { choice_ids: [line === "PO" ? 2 : 1], choice_names: [line === "PO" ? "ПО" : "ТП"] } },
+        { id: V.days, type: "number", value: days },
+      ],
+    };
+    vacations.push(task);
+    console.log("vacation.create", JSON.stringify(payload));
+    return ok(res, { task });
+  }
+  if (action === "vacation.delete") {
+    const i = vacations.findIndex((t) => t.id === payload.task_id);
+    if (i < 0) return fail(res, 404, "NOT_FOUND", "Отпуск не найден");
+    vacations.splice(i, 1);
+    console.log("vacation.delete", payload.task_id);
+    return ok(res, { deletedId: payload.task_id });
   }
   return fail(res, 400, "UNKNOWN_ACTION", `Неизвестный action: ${action}`);
 }

@@ -15,6 +15,8 @@ export const API_ACTIONS = Object.freeze({
   AUTH_LOGOUT: "auth.logout",
   PYRUS_REQUEST: "pyrus.request",
   SCHEDULE_SAVE: "schedule.save",
+  VACATION_CREATE: "vacation.create",
+  VACATION_DELETE: "vacation.delete",
 });
 
 const PUBLIC_ACTIONS = new Set([API_ACTIONS.AUTH_START, API_ACTIONS.AUTH_VERIFY]);

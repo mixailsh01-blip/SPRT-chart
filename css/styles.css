@@ -3906,3 +3906,23 @@ body.quick-delete-active .schedule-table td.shift-cell:hover .shift-pill {
 :root[data-theme="light"] .month-switcher .month-label-button:focus-visible {
   background: rgba(7, 62, 89, 0.08);
 }
+
+/* ===== Отпуск из «Шаблона смены» ===== */
+.schedule-table td.shift-cell.vacation-start-pending {
+  box-shadow: inset 0 0 0 2px var(--danger, #E02B3D);
+  background: rgba(224, 43, 61, 0.18);
+}
+body.quick-delete-active .schedule-table td.vacation-cell:hover .vacation-pill {
+  outline: 2px solid #E04848;
+  outline-offset: -2px;
+  opacity: 0.6;
+  text-decoration: line-through;
+  cursor: pointer;
+}
+.btn.btn-danger {
+  background: var(--danger, #E02B3D);
+  color: #fff;
+}
+.btn.btn-danger:hover {
+  filter: brightness(1.1);
+}
