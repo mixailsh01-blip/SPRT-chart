@@ -36,19 +36,6 @@
       "memberRoles": [
         1329812
       ]
-    },
-    {
-      "key": "PO",
-      "label": "ПО",
-      "departmentName": "ПО",
-      "departmentItemId": null,
-      "orgDepartmentIds": [],
-      "editRoles": [
-        1329638
-      ],
-      "memberRoles": [
-        1329638
-      ]
     }
   ],
   "pyrus": {
