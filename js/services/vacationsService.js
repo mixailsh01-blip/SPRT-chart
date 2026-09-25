@@ -6,6 +6,9 @@ const DEFAULT_VACATIONS_TTL_MS = 3 * 60 * 60 * 1000; // 3h
 // держим поверх реестра, пока он не догонит.
 const RECENT_WRITES_TTL_MS = 5 * 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+// Переживает перезагрузку страницы: без этого только что созданный/удалённый с сайта
+// отпуск виден до F5, а после — пропадает, пока реестр Pyrus не догонит (может занять минуты).
+const RECENT_WRITES_STORAGE_KEY = "sprt-chart:vacations:recentWrites:v1";
 
 function parseMonthKey(monthKey) {
   const [yearStr, monthStr] = String(monthKey).split("-");
@@ -31,10 +34,40 @@ export function createVacationsService({
   const recentUpserts = new Map(); // task_id -> { task, at }
   const recentDeletes = new Map(); // task_id -> at
 
+  function persistRecentWrites() {
+    try {
+      const upserts = Object.fromEntries(recentUpserts);
+      const deletes = Object.fromEntries(recentDeletes);
+      localStorage.setItem(RECENT_WRITES_STORAGE_KEY, JSON.stringify({ upserts, deletes }));
+    } catch (_) {
+      // localStorage недоступен (приватный режим и т.п.) — не критично, просто без переживания перезагрузки
+    }
+  }
+
+  function loadPersistedRecentWrites() {
+    try {
+      const raw = localStorage.getItem(RECENT_WRITES_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const border = Date.now() - RECENT_WRITES_TTL_MS;
+      for (const [id, v] of Object.entries(parsed?.upserts || {})) {
+        if (v && Number(v.at) >= border) recentUpserts.set(Number(id), v);
+      }
+      for (const [id, at] of Object.entries(parsed?.deletes || {})) {
+        if (Number(at) >= border) recentDeletes.set(Number(id), Number(at));
+      }
+    } catch (_) {
+      // повреждённые данные в localStorage — просто игнорируем
+    }
+  }
+  loadPersistedRecentWrites();
+
   function withRecentWrites(tasks) {
     const border = Date.now() - RECENT_WRITES_TTL_MS;
-    for (const [id, v] of recentUpserts) if (v.at < border) recentUpserts.delete(id);
-    for (const [id, at] of recentDeletes) if (at < border) recentDeletes.delete(id);
+    let pruned = false;
+    for (const [id, v] of recentUpserts) if (v.at < border) { recentUpserts.delete(id); pruned = true; }
+    for (const [id, at] of recentDeletes) if (at < border) { recentDeletes.delete(id); pruned = true; }
+    if (pruned) persistRecentWrites();
     if (!recentUpserts.size && !recentDeletes.size) return tasks;
     const byId = new Map(tasks.map((t) => [t.id, t]));
     for (const [id, { task }] of recentUpserts) if (!byId.has(id)) byId.set(id, task);
@@ -46,11 +79,14 @@ export function createVacationsService({
     invalidateByPrefix("pyrus:vacations:");
   }
 
-  // Результат vacation.create / vacation.delete — показываем сразу, не дожидаясь реестра
+  // Результат vacation.create / vacation.delete — показываем сразу, не дожидаясь реестра.
+  // Сохраняем и в localStorage: реестр Pyrus обновляется с задержкой (может быть и после
+  // перезагрузки страницы), а без этого только что созданное/удалённое видно только до F5.
   function applyCreated(task) {
     if (!task || task.id == null) return;
     recentUpserts.set(task.id, { task, at: Date.now() });
     recentDeletes.delete(task.id);
+    persistRecentWrites();
     invalidateAll();
   }
 
@@ -58,6 +94,7 @@ export function createVacationsService({
     if (taskId == null) return;
     recentDeletes.set(taskId, Date.now());
     recentUpserts.delete(taskId);
+    persistRecentWrites();
     invalidateAll();
   }
 

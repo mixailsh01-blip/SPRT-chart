@@ -7,7 +7,7 @@ import { createApiClient } from "./api/apiClient.js?v=2";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
-import { createVacationsService } from "./services/vacationsService.js?v=3";
+import { createVacationsService } from "./services/vacationsService.js?v=4";
 import { createScheduleService } from "./services/scheduleService.js?v=7";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=2";
 
@@ -2812,12 +2812,31 @@ async function createVacationForRange(line, row, firstDay, lastDay, submitLine =
       line: submitLine,
     });
     vacationsService.applyCreated(result && result.task);
+
+    // Показываем сразу, локально — не ждём, пока реестр Pyrus догонит создание
+    // (это может занять время, а после перезагрузки страницы — и того дольше).
+    const entry = {
+      taskId: result?.task?.id ?? null,
+      department: LINE_BY_KEY[submitLine]?.departmentName || LINE_LABELS[submitLine] || "",
+      startDay: firstDay,
+      endDayExclusive: lastDay + 1,
+      startLabel: fromLabel,
+      endLabel: toLabel,
+      year: String(year),
+      days: count,
+    };
+    const list = (state.vacationsByEmployee[row.employeeId] = state.vacationsByEmployee[row.employeeId] || []);
+    list.push(entry);
+    list.sort((a, b) => (a.startDay || 0) - (b.startDay || 0));
+    persistCachedScheduleForMonth(year, monthIndex);
+    renderScheduleCurrentLine();
   } catch (err) {
     console.error("vacation.create error", err);
     alert(`Не удалось добавить отпуск: ${err.message || err}`);
     return;
   }
-  await refreshVacationsForCurrentMonth();
+  // Сверка с Pyrus — в фоне, не блокирует уже показанный результат
+  refreshVacationsForCurrentMonth().catch(() => {});
 }
 
 async function confirmAndDeleteVacation(row, vac) {
@@ -2830,7 +2849,17 @@ async function confirmAndDeleteVacation(row, vac) {
     alert(`Не удалось удалить отпуск: ${err.message || err}`);
     return;
   }
-  await refreshVacationsForCurrentMonth();
+
+  // Убираем сразу, локально — не ждём, пока реестр Pyrus догонит удаление
+  const list = state.vacationsByEmployee[row.employeeId];
+  if (Array.isArray(list)) {
+    state.vacationsByEmployee[row.employeeId] = list.filter((v) => v.taskId !== vac.taskId);
+  }
+  const { year, monthIndex } = state.monthMeta;
+  persistCachedScheduleForMonth(year, monthIndex);
+  renderScheduleCurrentLine();
+  // Сверка с Pyrus — в фоне
+  refreshVacationsForCurrentMonth().catch(() => {});
 }
 
 function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
