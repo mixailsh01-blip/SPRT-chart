@@ -852,6 +852,7 @@ async function init() {
   createShiftPopover();
   createEmployeeFilterPopover();
   createMonthPickerPopover();
+  createLunchPopover();
   renderChangeLog();
 
   // Если восстановили сессию — загружаем данные как после логина
@@ -3161,6 +3162,8 @@ async function handleSwapTargetClick({ row, day, shift }) {
 // -----------------------------
 // Сотрудник на смене уходит на обед: бэкенд убирает его из группы Манго, через час возвращает сам
 // (не вернулся сам — письмо руководителю). Кнопка видна, только когда сейчас идёт смена в линии.
+// Обед можно начать сразу или запланировать на более позднее время той же смены (lunch.start принимает
+// необязательный start_at) — тогда до наступления времени сотрудник остаётся в группе Манго как обычно.
 
 const LUNCH_POLL_MS = 60_000;
 const lunchUi = { status: null, endsAt: 0, tick: null, poll: null, refreshAfterEnd: null, busy: false, unsupported: false };
@@ -3172,11 +3175,35 @@ function formatCountdown(totalSec) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+// HH:MM локального времени (UTC+смещение из конфига) из ISO UTC.
+function isoToLocalHHMM(iso) {
+  if (!iso) return "";
+  const ms = new Date(iso).getTime() + TIMEZONE_OFFSET_MIN * 60000;
+  if (Number.isNaN(ms)) return "";
+  const d = new Date(ms);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+// HH:MM локального времени -> ISO UTC. Если получившийся момент больше чем на 6 часов в прошлом —
+// считаем, что это следующие сутки (для ночных смен через полночь).
+function localHHMMToIso(hhmm, referenceMs = Date.now()) {
+  const min = parseTimeToMinutes(hhmm);
+  if (min == null) return null;
+  const offsetMs = TIMEZONE_OFFSET_MIN * 60000;
+  const nowLocal = new Date(referenceMs + offsetMs);
+  let candidateMs =
+    Date.UTC(nowLocal.getUTCFullYear(), nowLocal.getUTCMonth(), nowLocal.getUTCDate(), Math.floor(min / 60), min % 60) -
+    offsetMs;
+  if (candidateMs < referenceMs - 6 * 3600e3) candidateMs += 24 * 3600e3;
+  return new Date(candidateMs).toISOString();
+}
+
 function renderLunchWidget() {
   if (!lunchWidgetEl || !btnLunchEl || !lunchTimerEl) return;
   const st = lunchUi.status;
   const lunch = st?.lunch || null;
   const active = lunch?.status === "active";
+  const scheduled = lunch?.status === "scheduled";
   const visible = !lunchUi.unsupported && Boolean(st) && (st.onShift || Boolean(lunch));
   lunchWidgetEl.classList.toggle("hidden", !visible);
   lunchWidgetEl.classList.toggle("active", visible && active);
@@ -3195,11 +3222,21 @@ function renderLunchWidget() {
     return;
   }
 
+  if (scheduled) {
+    lunchTimerEl.textContent = `🍽 с ${isoToLocalHHMM(lunch.start_utc)}`;
+    lunchTimerEl.title = "Запланированный обед";
+    lunchTimerEl.classList.remove("hidden", "overdue");
+    btnLunchEl.textContent = "✕ Отменить";
+    btnLunchEl.title = "Отменить запланированный обед";
+    btnLunchEl.disabled = lunchUi.busy;
+    return;
+  }
+
   lunchTimerEl.classList.add("hidden");
   btnLunchEl.textContent = lunch ? "🍽 Обед был" : "🍽 Обед";
   btnLunchEl.disabled = lunchUi.busy || !st.canStart;
   btnLunchEl.title = st.canStart
-    ? `Уйти на обед на ${st.lunchMinutes || 60} мин — на это время вас уберут из группы Манго`
+    ? `Уйти на обед на ${st.lunchMinutes || 60} мин — сразу или по расписанию`
     : lunch
       ? "Обед сегодня уже был"
       : "";
@@ -3209,6 +3246,7 @@ function applyLunchStatus(status) {
   lunchUi.status = status || null;
   const lunch = status?.lunch;
   const active = lunch?.status === "active";
+  const scheduled = lunch?.status === "scheduled";
   if (active) lunchUi.endsAt = Date.now() + Number(lunch.remainingSec || 0) * 1000;
 
   if (active && !lunchUi.tick) {
@@ -3226,6 +3264,22 @@ function applyLunchStatus(status) {
     clearInterval(lunchUi.tick);
     lunchUi.tick = null;
   }
+
+  if (lunchUi.refreshAfterEnd) {
+    clearTimeout(lunchUi.refreshAfterEnd);
+    lunchUi.refreshAfterEnd = null;
+  }
+  // Запланированный обед начнётся сам (таймер n8n проверяет раз в минуту) — обновим статус вскоре после
+  if (scheduled) {
+    const untilStartMs = new Date(lunch.start_utc).getTime() - Date.now();
+    if (untilStartMs > 0 && untilStartMs < 3600e3) {
+      lunchUi.refreshAfterEnd = setTimeout(() => {
+        lunchUi.refreshAfterEnd = null;
+        refreshLunchStatus();
+      }, untilStartMs + 65_000);
+    }
+  }
+
   renderLunchWidget();
 }
 
@@ -3264,23 +3318,23 @@ function stopLunchWidget() {
   lunchUi.tick = null;
   lunchUi.refreshAfterEnd = null;
   lunchUi.status = null;
-  document.removeEventListener("visibilitychange", handleLunchVisibility);
+  closeLunchPopover();
   renderLunchWidget();
+  document.removeEventListener("visibilitychange", handleLunchVisibility);
 }
 
-btnLunchEl?.addEventListener("click", async () => {
+async function startLunch(startAtIso) {
   if (lunchUi.busy) return;
-  const active = lunchUi.status?.lunch?.status === "active";
-  if (!active) {
-    const minutes = lunchUi.status?.lunchMinutes || 60;
-    if (!confirm(`Уйти на обед на ${minutes} минут?\n\nНа это время вас уберут из группы Манго. Через ${minutes} минут вернут в линию автоматически.`)) return;
-  }
   lunchUi.busy = true;
   renderLunchWidget();
   try {
-    const status = await apiClient.call(active ? "lunch.end" : "lunch.start", {});
+    const status = await apiClient.call("lunch.start", startAtIso ? { start_at: startAtIso } : {});
     applyLunchStatus(status);
-    showAppToast(active ? "Вы снова в линии" : "Приятного аппетита! Вы убраны из линии на время обеда");
+    showAppToast(
+      status?.lunch?.status === "scheduled"
+        ? `Обед запланирован на ${isoToLocalHHMM(status.lunch.start_utc)}`
+        : "Приятного аппетита! Вы убраны из линии на время обеда"
+    );
   } catch (err) {
     alert(err.message || String(err));
     refreshLunchStatus();
@@ -3288,6 +3342,132 @@ btnLunchEl?.addEventListener("click", async () => {
     lunchUi.busy = false;
     renderLunchWidget();
   }
+}
+
+async function endOrCancelLunch() {
+  if (lunchUi.busy) return;
+  const status = lunchUi.status?.lunch?.status;
+  lunchUi.busy = true;
+  renderLunchWidget();
+  try {
+    const result = await apiClient.call("lunch.end", {});
+    applyLunchStatus(result);
+    showAppToast(status === "scheduled" ? "Обед отменён" : "Вы снова в линии");
+  } catch (err) {
+    alert(err.message || String(err));
+    refreshLunchStatus();
+  } finally {
+    lunchUi.busy = false;
+    renderLunchWidget();
+  }
+}
+
+// -----------------------------
+// Поповер «Обед»: выбор «сейчас» или отложенного времени начала
+// -----------------------------
+
+let lunchPopoverEl = null;
+let lunchPopoverBackdropEl = null;
+let lunchPopoverKeydownHandler = null;
+
+// Ставит попап под якорем, не давая ему вылезти за края экрана (важно на мобильных, где
+// кнопка «Обед» может оказаться у левого края переносящегося ряда шапки).
+function positionPopoverNear(popoverEl, anchorEl) {
+  if (!popoverEl || !anchorEl) return;
+  const rect = anchorEl.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  popoverEl.style.left = "0px";
+  popoverEl.style.top = "0px";
+  const popoverRect = popoverEl.getBoundingClientRect();
+  const popoverWidth = popoverRect.width || 280;
+  const popoverHeight = popoverRect.height || 160;
+
+  let left = rect.left;
+  let top = rect.bottom + 8;
+  const fitsBelow = top + popoverHeight <= viewportHeight - 16;
+  const fitsAbove = rect.top - popoverHeight - 8 >= 16;
+  if (!fitsBelow && fitsAbove) top = rect.top - popoverHeight - 8;
+
+  left = Math.max(16, Math.min(left, viewportWidth - popoverWidth - 16));
+  top = Math.max(16, Math.min(top, viewportHeight - popoverHeight - 16));
+
+  popoverEl.style.left = `${left}px`;
+  popoverEl.style.top = `${top}px`;
+}
+
+function createLunchPopover() {
+  if (lunchPopoverEl) return;
+  lunchPopoverBackdropEl = document.createElement("div");
+  lunchPopoverBackdropEl.className = "lunch-popover-backdrop hidden";
+  lunchPopoverEl = document.createElement("div");
+  lunchPopoverEl.className = "lunch-popover hidden";
+  lunchPopoverBackdropEl.addEventListener("click", () => closeLunchPopover());
+  document.body.appendChild(lunchPopoverBackdropEl);
+  document.body.appendChild(lunchPopoverEl);
+}
+
+function closeLunchPopover() {
+  if (!lunchPopoverEl) return;
+  lunchPopoverEl.classList.add("hidden");
+  lunchPopoverBackdropEl?.classList.add("hidden");
+  if (lunchPopoverKeydownHandler) {
+    document.removeEventListener("keydown", lunchPopoverKeydownHandler);
+    lunchPopoverKeydownHandler = null;
+  }
+}
+
+function openLunchPopover() {
+  if (!lunchPopoverEl || !btnLunchEl) return;
+  const minutes = lunchUi.status?.lunchMinutes || 60;
+  const shiftEnd = lunchUi.status?.shiftEnd;
+  const nowLocal = isoToLocalHHMM(new Date().toISOString());
+  const maxLocal = shiftEnd ? isoToLocalHHMM(shiftEnd) : "";
+
+  lunchPopoverEl.innerHTML = `
+    <div class="lunch-popover-title">🍽 Обед (${minutes} мин)</div>
+    <button type="button" class="btn primary full-width" id="lunch-start-now">Уйти сейчас</button>
+    <div class="lunch-popover-or">или запланировать на время этой смены:</div>
+    <div class="lunch-popover-row">
+      <input type="time" id="lunch-start-time" value="${nowLocal}" />
+      <button type="button" class="btn" id="lunch-start-later">Запланировать</button>
+    </div>
+    <div class="lunch-popover-note">${maxLocal ? `Смена идёт до ${maxLocal}.` : ""} Уберём из группы Манго ровно в это время.</div>
+  `;
+
+  lunchPopoverBackdropEl.classList.remove("hidden");
+  lunchPopoverEl.classList.remove("hidden");
+  positionPopoverNear(lunchPopoverEl, btnLunchEl);
+
+  lunchPopoverEl.querySelector("#lunch-start-now").addEventListener("click", () => {
+    closeLunchPopover();
+    startLunch();
+  });
+  lunchPopoverEl.querySelector("#lunch-start-later").addEventListener("click", () => {
+    const value = lunchPopoverEl.querySelector("#lunch-start-time").value;
+    if (!value) return;
+    const iso = localHHMMToIso(value);
+    if (!iso) return;
+    closeLunchPopover();
+    startLunch(iso);
+  });
+
+  lunchPopoverKeydownHandler = (e) => {
+    if (e.key === "Escape") closeLunchPopover();
+  };
+  document.addEventListener("keydown", lunchPopoverKeydownHandler);
+}
+
+btnLunchEl?.addEventListener("click", () => {
+  if (lunchUi.busy) return;
+  const status = lunchUi.status?.lunch?.status;
+  if (status === "active" || status === "scheduled") {
+    endOrCancelLunch();
+    return;
+  }
+  if (!lunchUi.status?.canStart) return;
+  openLunchPopover();
 });
 
 // -----------------------------

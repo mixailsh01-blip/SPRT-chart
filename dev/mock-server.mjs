@@ -63,22 +63,38 @@ const localDay = (ms) => new Date(ms + LOCAL_OFFSET_MS).toISOString().slice(0, 1
 const LUNCH_MS = Number(process.env.LUNCH_MIN || 60) * 60000;
 const lunches = new Map(); // memberId -> { status, start, end, endedAt }
 
-function lunchState(memberId) {
+function shiftOf(memberId) {
   const t = Date.now();
-  const onShift = tasks.some((task) => {
+  return tasks.find((task) => {
     if (task.fields[1].value.id !== memberId) return false;
     const s = new Date(task.fields[2].value).getTime();
     return s <= t && s + task.fields[2].duration * 60000 > t;
-  });
+  }) || null;
+}
+
+function lunchState(memberId) {
+  const t = Date.now();
+  const shift = shiftOf(memberId);
+  const shiftEnd = shift ? new Date(new Date(shift.fields[2].value).getTime() + shift.fields[2].duration * 60000) : null;
   const l = lunches.get(memberId);
-  if (l && l.status === "active" && l.end <= t) Object.assign(l, { status: "auto", endedAt: t }); // «таймер»
+  // «Таймер»: запланированный обед стартует сам, активный — сам возвращается через час
+  if (l && l.status === "scheduled" && l.start <= t) Object.assign(l, { status: "active" });
+  if (l && l.status === "active" && l.end <= t) Object.assign(l, { status: "auto", endedAt: t });
   const today = l && localDay(l.start) === localDay(t);
-  const lunch = l && (l.status === "active" || today)
+  const cancelled = l && l.status === "cancelled";
+  const lunch = l && !cancelled && (l.status === "active" || l.status === "scheduled" || today)
     ? { status: l.status, start_utc: new Date(l.start).toISOString(), end_utc: new Date(l.end).toISOString(),
         ended_at: l.endedAt ? new Date(l.endedAt).toISOString() : null, overdue: l.status === "auto",
         remainingSec: l.status === "active" ? Math.round((l.end - t) / 1000) : 0 }
     : null;
-  return { onShift, shiftEnd: null, lunch, lunchMinutes: LUNCH_MS / 60000, canStart: onShift && !lunch };
+  const usedToday = today && !cancelled ? 1 : 0;
+  return {
+    onShift: !!shift,
+    shiftEnd: shiftEnd ? shiftEnd.toISOString() : null,
+    lunch,
+    lunchMinutes: LUNCH_MS / 60000,
+    canStart: !!shift && usedToday < 1,
+  };
 }
 
 const vacations = [
@@ -196,16 +212,27 @@ async function handleApi(req, res) {
   if (action === "lunch.status") return ok(res, lunchState(session));
   if (action === "lunch.start") {
     const st = lunchState(session);
-    if (st.lunch?.status === "active") return ok(res, st);
+    if (st.lunch && (st.lunch.status === "active" || st.lunch.status === "scheduled")) return ok(res, st);
     if (!st.onShift) return fail(res, 400, "NOT_ON_SHIFT", "Сейчас у вас нет смены в линии");
     if (!st.canStart) return fail(res, 409, "LUNCH_USED", "Обед сегодня уже был");
-    lunches.set(session, { status: "active", start: Date.now(), end: Date.now() + LUNCH_MS });
-    console.log("lunch.start", session);
+    const now = Date.now();
+    let startAt = now;
+    if (payload.start_at) {
+      const t = new Date(payload.start_at).getTime();
+      if (Number.isNaN(t)) return fail(res, 400, "BAD_REQUEST", "Некорректное время начала обеда");
+      if (t < now - 60e3) return fail(res, 400, "BAD_REQUEST", "Время начала обеда уже прошло");
+      if (st.shiftEnd && t >= new Date(st.shiftEnd).getTime()) return fail(res, 400, "BAD_REQUEST", "Время начала обеда должно быть раньше конца смены");
+      startAt = Math.max(t, now);
+    }
+    const isImmediate = startAt <= now + 30e3;
+    lunches.set(session, { status: isImmediate ? "active" : "scheduled", start: startAt, end: startAt + LUNCH_MS });
+    console.log("lunch.start", session, isImmediate ? "сейчас" : `на ${new Date(startAt).toISOString()}`);
     return ok(res, lunchState(session));
   }
   if (action === "lunch.end") {
     const l = lunches.get(session);
-    if (l && l.status === "active") Object.assign(l, { status: "returned", endedAt: Date.now() });
+    if (l && l.status === "scheduled") Object.assign(l, { status: "cancelled", endedAt: Date.now() });
+    else if (l && l.status === "active") Object.assign(l, { status: "returned", endedAt: Date.now() });
     console.log("lunch.end", session);
     return ok(res, lunchState(session));
   }

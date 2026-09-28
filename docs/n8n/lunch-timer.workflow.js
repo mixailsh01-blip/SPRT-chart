@@ -1,6 +1,9 @@
 // Воркфлоу n8n «SPRT: обеды — возврат в линию».
-// Раз в минуту: обеды из sprt_lunch со status = active и истёкшим end_utc закрываются (status = auto, overdue = true),
-// руководителю уходит письмо, группа Манго пересобирается (сотрудник снова в линии).
+// Раз в минуту, две независимые ветки:
+// 1) обеды из sprt_lunch со status = active и истёкшим end_utc закрываются (status = auto, overdue = true),
+//    руководителю уходит письмо, группа Манго пересобирается (сотрудник снова в линии);
+// 2) запланированные обеды (status = scheduled), чьё start_utc наступило, переводятся в active —
+//    сотрудник убирается из группы Манго ровно в назначенное время.
 import { workflow, node, trigger, expr } from '@n8n/workflow-sdk';
 
 const MANAGER_EMAILS = 'm.demetiev@sprt-service.ru'; // руководитель(и) — через запятую
@@ -91,11 +94,70 @@ const closeLunch = node({
   },
 });
 
+const scheduledLunches = node({
+  type: 'n8n-nodes-base.dataTable',
+  version: 1,
+  config: {
+    name: 'Обеды: запланированные',
+    parameters: {
+      resource: 'row',
+      operation: 'get',
+      dataTableId: LUNCH_TABLE,
+      matchType: 'allConditions',
+      filters: { conditions: [{ keyName: 'status', condition: 'eq', keyValue: 'scheduled' }] },
+      returnAll: true,
+    },
+  },
+});
+
+const startingNow = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Обеды: время начать',
+    parameters: {
+      jsCode: `// Запланированные обеды, чьё время наступило (start_utc <= сейчас) — переводим в active.
+const now = Date.now();
+return $input.all()
+  .map((i) => i.json)
+  .filter((r) => r && r.id != null && r.status === 'scheduled' && new Date(r.start_utc).getTime() <= now)
+  .map((r) => ({ json: { row_id: r.id } }));
+`,
+    },
+  },
+});
+
+const startScheduledLunch = node({
+  type: 'n8n-nodes-base.dataTable',
+  version: 1,
+  config: {
+    name: 'Обед: начать (время пришло)',
+    parameters: {
+      resource: 'row',
+      operation: 'update',
+      dataTableId: LUNCH_TABLE,
+      matchType: 'allConditions',
+      filters: { conditions: [{ keyName: 'id', condition: 'eq', keyValue: expr('{{ $json.row_id }}') }] },
+      columns: {
+        mappingMode: 'defineBelow',
+        value: { status: 'active' },
+        matchingColumns: [],
+        schema: [
+          { id: 'status', displayName: 'status', required: false, defaultMatch: false, display: true, type: 'string', readOnly: false, removed: false },
+        ],
+        attemptToConvertTypes: false,
+        convertFieldsToString: false,
+      },
+      options: {},
+    },
+  },
+});
+
 const mangoSync = node({
   type: 'n8n-nodes-base.httpRequest',
   version: 4.2,
   config: {
-    name: 'Манго: вернуть в группу',
+    name: 'Манго: пересобрать группу',
     executeOnce: true,
     onError: 'continueRegularOutput',
     parameters: {
@@ -136,4 +198,8 @@ export default workflow('sprt-lunch-timer', 'SPRT: обеды — возврат
   .to(expired)
   .to(closeLunch.to(mangoSync))
   .add(expired)
-  .to(managerEmail);
+  .to(managerEmail)
+  .add(everyMinute)
+  .to(scheduledLunches)
+  .to(startingNow)
+  .to(startScheduledLunch.to(mangoSync));

@@ -4018,3 +4018,60 @@ body.swap-busy #schedule-root {
 body.swap-mode .app-toast {
   bottom: 110px;
 }
+
+/* ---------- Поповер «Обед» ---------- */
+.lunch-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 8998;
+  background: transparent;
+}
+.lunch-popover-backdrop.hidden {
+  display: none;
+}
+.lunch-popover {
+  position: fixed;
+  z-index: 8999;
+  width: min(280px, calc(100vw - 24px));
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-strong);
+  padding: 14px;
+  font-size: 13px;
+}
+.lunch-popover.hidden {
+  display: none;
+}
+.lunch-popover-title {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.lunch-popover-or {
+  color: var(--text-muted);
+  margin: 10px 0 6px;
+  text-align: center;
+}
+.lunch-popover-row {
+  display: flex;
+  gap: 8px;
+}
+.lunch-popover-row input[type="time"] {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-alt);
+  color: var(--text);
+}
+.lunch-popover-row .btn {
+  flex-shrink: 0;
+}
+.lunch-popover-note {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}

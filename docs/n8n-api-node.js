@@ -178,9 +178,11 @@ function lunchState(s) {
   const start = row ? new Date(row.start_utc).getTime() : NaN;
   const isToday = row && !Number.isNaN(start) && localDay(start) === localDay(now);
   const active = !!row && row.status === 'active';
-  const lunch = row && (active || isToday)
+  const scheduled = !!row && row.status === 'scheduled';
+  const cancelled = !!row && row.status === 'cancelled';
+  const lunch = row && !cancelled && (active || scheduled || isToday)
     ? {
-        status: row.status, // active | returned | auto
+        status: row.status, // scheduled | active | returned | auto
         start_utc: row.start_utc,
         end_utc: row.end_utc,
         ended_at: row.ended_at || null,
@@ -188,13 +190,14 @@ function lunchState(s) {
         remainingSec: active ? Math.max(0, Math.round((new Date(row.end_utc).getTime() - now) / 1000)) : 0,
       }
     : null;
-  const usedToday = isToday && !active ? 1 : 0;
+  // Отменённый обед не занимает слот на сегодня — можно запланировать заново
+  const usedToday = isToday && !cancelled ? 1 : 0;
   return {
     onShift: !!shift,
     shiftEnd: shift ? shift.end_utc : null,
     lunch,
     lunchMinutes: LUNCH_MS / 60000,
-    canStart: !!shift && !active && usedToday < LUNCHES_PER_DAY,
+    canStart: !!shift && usedToday < LUNCHES_PER_DAY,
   };
 }
 
@@ -482,19 +485,32 @@ try {
 
   // Обед: сотрудник на смене уходит на 1 час — его убирают из группы Манго, через час он возвращается сам
   // (воркфлоу «SPRT: обеды — возврат в линию»). Не вернулся сам — письмо руководителю.
+  // Можно начать сразу или запланировать (payload.start_at, ISO) на более позднее время этой же смены —
+  // тогда до наступления времени сотрудник остаётся в группе Манго как обычно; тот же воркфлоу раз в
+  // минуту переводит запланированный обед в активный и убирает сотрудника из группы.
   if (action === 'lunch.status') return ok(lunchState(session));
 
   if (action === 'lunch.start') {
     const st = lunchState(session);
-    if (st.lunch && st.lunch.status === 'active') return ok(st);
+    if (st.lunch && (st.lunch.status === 'active' || st.lunch.status === 'scheduled')) return ok(st);
     if (!st.onShift) return fail(400, 'NOT_ON_SHIFT', 'Сейчас у вас нет смены в линии');
     if (!st.canStart) return fail(409, 'LUNCH_USED', 'Обед сегодня уже был');
     const shift = activeShiftOf(session);
+    const shiftEndMs = new Date(shift.end_utc).getTime();
+    let startAt = now;
+    if (p.start_at != null && p.start_at !== '') {
+      const t = new Date(p.start_at).getTime();
+      if (Number.isNaN(t)) return fail(400, 'BAD_REQUEST', 'Некорректное время начала обеда');
+      if (t < now - 60e3) return fail(400, 'BAD_REQUEST', 'Время начала обеда уже прошло');
+      if (t >= shiftEndMs) return fail(400, 'BAD_REQUEST', 'Время начала обеда должно быть раньше конца смены');
+      startAt = Math.max(t, now);
+    }
+    const isImmediate = startAt <= now + 30e3;
     const row = lunchRow(session, {
       dept: String(shift.podrazdelenie || ''),
-      start_utc: new Date(now).toISOString(),
-      end_utc: new Date(now + LUNCH_MS).toISOString(),
-      status: 'active',
+      start_utc: new Date(startAt).toISOString(),
+      end_utc: new Date(startAt + LUNCH_MS).toISOString(),
+      status: isImmediate ? 'active' : 'scheduled',
     });
     const prev = lunchRowOf(session.memberId);
     if (prev) lunchRows.splice(lunchRows.indexOf(prev), 1);
@@ -506,6 +522,20 @@ try {
 
   if (action === 'lunch.end') {
     const row = lunchRowOf(session.memberId);
+    // Запланированный, но ещё не начавшийся обед — отменяем, слот на сегодня освобождается
+    if (row && row.status === 'scheduled') {
+      const cancelled = lunchRow(session, {
+        dept: row.dept || '',
+        start_utc: row.start_utc,
+        end_utc: row.end_utc,
+        status: 'cancelled',
+        ended_at: new Date(now).toISOString(),
+      });
+      lunchRows.splice(lunchRows.indexOf(row), 1, cancelled);
+      const out = ok(lunchState(session));
+      out[0].json.lunchUpdates = [cancelled];
+      return out;
+    }
     if (!row || row.status !== 'active') return ok(lunchState(session));
     const updated = lunchRow(session, {
       dept: row.dept || '',
