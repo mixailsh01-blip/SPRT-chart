@@ -271,6 +271,32 @@ function updateCurrentUserLabel(login) {
   if (profileAvatarInitialsEl) profileAvatarInitialsEl.textContent = computeInitials(label);
 }
 
+function pyrusAvatarUrl(avatarId, size = 160) {
+  return avatarId ? `https://files.pyrus.com/services/avatar/${avatarId}/${size}` : null;
+}
+
+function updateProfileAvatarImage() {
+  if (!profileAvatarImgEl) return;
+  const memberId = state.auth.memberId;
+  const employee = memberId != null ? (state.employeesByLine.ALL || []).find((e) => Number(e.id) === Number(memberId)) : null;
+  const url = pyrusAvatarUrl(employee?.avatarId);
+  if (!url) {
+    profileAvatarImgEl.classList.add("hidden");
+    profileAvatarImgEl.removeAttribute("src");
+    return;
+  }
+  profileAvatarImgEl.onerror = () => {
+    profileAvatarImgEl.classList.add("hidden");
+    profileAvatarImgEl.removeAttribute("src");
+    profileAvatarInitialsEl?.classList.remove("hidden");
+  };
+  profileAvatarImgEl.onload = () => {
+    profileAvatarImgEl.classList.remove("hidden");
+    profileAvatarInitialsEl?.classList.add("hidden");
+  };
+  profileAvatarImgEl.src = url;
+}
+
 function normalizeAuthUser(rawUser, overrides = {}) {
   if (!rawUser && !overrides.login && !overrides.name && overrides.id == null && !overrides.roles) {
     return null;
@@ -3665,6 +3691,8 @@ async function loadEmployees() {
   for (const key of ALL_LINE_KEYS) {
     state.employeesByLine[key] = key === "ALL" ? employeesByLine.ALL : employeesByLine[key].sort(byName);
   }
+
+  updateProfileAvatarImage();
 
   persistCachedEmployees();
 }
