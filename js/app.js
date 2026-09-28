@@ -856,9 +856,13 @@ async function init() {
   if (!loadCurrentMonthPreference()) initMonthMetaToToday();
   bindEmailAuth();
 
+  const loggedInByMagicLink = await tryMagicLinkLogin();
+
   // Автовосстановление сессии: токен проверяет бэкенд (auth.me)
   const rawAuth = readRawAuthCache();
-  if (rawAuth && rawAuth.authMethod !== AUTH_METHOD) {
+  if (loggedInByMagicLink) {
+    // уже вошли по ссылке из письма — обычное восстановление сессии не нужно
+  } else if (rawAuth && rawAuth.authMethod !== AUTH_METHOD) {
     clearAllCacheAndCookies();
     resetAuthState();
     showLoginScreen();
@@ -1399,6 +1403,53 @@ async function requestAuthCode(errorEl) {
   }
 }
 
+async function verifyLogin(identifier, code) {
+  const result = await apiClient.call("auth.verify", {
+    provider: config.auth?.provider || "mango",
+    identifierType: AUTH_IDENTIFIER.type,
+    identifier,
+    challengeId: emailAuthState.challengeId || identifier,
+    code,
+  });
+  if (!result?.sessionToken) {
+    throw Object.assign(new Error("Сервер не вернул сессию. Повторите вход."), { code: "NO_SESSION" });
+  }
+  applyAuthResult(result);
+  clearResendTimer();
+  showMainScreen();
+  renderLineTabs();
+  updateLineToggleUI();
+  persistCurrentLinePreference();
+  loadInitialData();
+  return result;
+}
+
+// Вход по ссылке из письма с кодом: ?li_email=...&li_code=... — сразу auth.verify без ручного ввода.
+async function tryMagicLinkLogin() {
+  const params = new URLSearchParams(window.location.search);
+  const email = params.get("li_email");
+  const code = params.get("li_code");
+  if (!email || !code) return false;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("li_email");
+  url.searchParams.delete("li_code");
+  window.history.replaceState({}, "", url.toString());
+  try {
+    emailAuthState.targetEmail = normalizeIdentifier(email) || email;
+    await verifyLogin(emailAuthState.targetEmail, code);
+    return true;
+  } catch (err) {
+    if (emailInputEl) emailInputEl.value = email;
+    const messages = {
+      INVALID_CODE: "Ссылка устарела — введите код вручную",
+      CODE_EXPIRED: "Код истёк — запросите новый",
+      LOCKED: "Слишком много попыток. Попробуйте позже",
+    };
+    if (emailRequestErrorEl) emailRequestErrorEl.textContent = messages[err?.code] || "Не удалось войти по ссылке — введите код вручную";
+    return false;
+  }
+}
+
 function bindEmailAuth() {
   if (!emailInputEl) return;
   applyAuthTexts();
@@ -1451,15 +1502,8 @@ function bindEmailAuth() {
       return;
     }
     emailVerifyButtonEl.disabled = true;
-    let result;
     try {
-      result = await apiClient.call("auth.verify", {
-        provider: config.auth?.provider || "mango",
-        identifierType: AUTH_IDENTIFIER.type,
-        identifier: emailAuthState.targetEmail,
-        challengeId: emailAuthState.challengeId,
-        code,
-      });
+      await verifyLogin(emailAuthState.targetEmail, code);
     } catch (err) {
       const messages = {
         INVALID_CODE: "Неверный код. Попробуйте ещё раз",
@@ -1471,18 +1515,6 @@ function bindEmailAuth() {
     } finally {
       emailVerifyButtonEl.disabled = false;
     }
-    if (!result?.sessionToken) {
-      setOtpError("Сервер не вернул сессию. Повторите вход.");
-      return;
-    }
-
-    applyAuthResult(result);
-    clearResendTimer();
-    showMainScreen();
-    renderLineTabs();
-    updateLineToggleUI();
-    persistCurrentLinePreference();
-    loadInitialData();
   });
 
   emailResendButtonEl?.addEventListener("click", async () => {

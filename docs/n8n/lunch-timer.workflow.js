@@ -10,6 +10,30 @@ const MANAGER_EMAILS = 'm.demetiev@sprt-service.ru'; // руководитель
 const LUNCH_TABLE = { __rl: true, mode: 'id', value: 'JugiHxYKjZsK9R2t', cachedResultName: 'sprt_lunch' };
 const MANGO_SYNC_URL = 'https://6009071-by70196.twc1.net/webhook/sprt-mango-sync-919f9cf55c361996';
 
+// Единый брендинг всех писем SPRT (тот же shell — в «Письмо с кодом» / «Уведомление: письмо» узла «API»
+// воркфлоу SPRT-chart API). Между header/footer подставляется контент письма.
+const EMAIL_SHELL_HEADER = `<div style="font-family:Arial,Helvetica,sans-serif;background:#03202F;padding:32px 16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;background:#0B2A3B;border-radius:16px;overflow:hidden;border:1px solid #16374A">
+<tr><td style="padding:28px 32px 20px;text-align:center">
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 14px"><tr>
+<td style="width:34px;height:34px;background:#ffffff;border-radius:8px;text-align:center;vertical-align:middle;font-weight:700;font-size:18px;color:#073E59;font-family:Arial,sans-serif">S</td>
+<td style="width:8px"></td>
+<td style="width:34px;height:34px;background:#ffffff;border-radius:8px;text-align:center;vertical-align:middle;font-weight:700;font-size:18px;color:#073E59;font-family:Arial,sans-serif">P</td>
+<td style="width:8px"></td>
+<td style="width:34px;height:34px;background:#ffffff;border-radius:8px;text-align:center;vertical-align:middle;font-weight:700;font-size:18px;color:#073E59;font-family:Arial,sans-serif">R</td>
+<td style="width:8px"></td>
+<td style="width:34px;height:34px;background:#ffffff;border-radius:8px;text-align:center;vertical-align:middle;font-weight:700;font-size:18px;color:#073E59;font-family:Arial,sans-serif">T</td>
+</tr></table>
+<div style="color:#8FA9B8;font-size:12px">Надёжная поддержка Вашего бизнеса</div>
+<div style="color:#ffffff;font-size:15px;font-weight:600;margin-top:2px">График смен</div>
+</td></tr>
+<tr><td style="padding:4px 32px 28px">
+<div style="background:#F2F6F8;border-radius:14px;padding:24px;color:#0B1F2A;font-size:14px;line-height:1.5">`;
+const EMAIL_SHELL_FOOTER = `</div>
+</td></tr>
+</table>
+</div>`;
+
 const everyMinute = trigger({
   type: 'n8n-nodes-base.scheduleTrigger',
   version: 1.3,
@@ -182,11 +206,10 @@ const managerEmail = node({
       fromEmail: 'SPRT График смен <m.demetiev@sprt-service.ru>',
       toEmail: MANAGER_EMAILS,
       subject: expr('⏰ Обед просрочен: {{ $json.name }}'),
-      html: expr(`<div style="font-family:Arial,sans-serif;font-size:14px;color:#0B1F2A">
+      html: expr(`${EMAIL_SHELL_HEADER}
 <p><b>{{ $json.name }}</b>{{ $json.dept ? ' (' + $json.dept + ')' : '' }} ушёл на обед в {{ $json.start_local }} и не вернулся в линию сам к {{ $json.end_local }}.</p>
-<p>Сотрудник автоматически возвращён в группу Mango.</p>
-<p style="color:#5B7483">Письмо отправлено «Графиком смен» SPRT.</p>
-</div>`),
+<p style="margin:0">Сотрудник автоматически возвращён в группу Mango.</p>
+${EMAIL_SHELL_FOOTER}`),
       options: { appendAttribution: false },
     },
   },
