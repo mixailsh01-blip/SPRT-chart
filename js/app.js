@@ -255,10 +255,20 @@ function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
+function computeInitials(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "--";
+  const first = parts[0][0] || "";
+  const second = parts.length > 1 ? parts[1][0] || "" : "";
+  return (first + second).toUpperCase() || "--";
+}
+
 function updateCurrentUserLabel(login) {
-  if (!currentUserLabelEl) return;
   const name = state.auth.user?.name || "";
-  currentUserLabelEl.textContent = name || (login || state.auth.user?.login || "").trim();
+  const label = name || (login || state.auth.user?.login || "").trim();
+  if (currentUserLabelEl) currentUserLabelEl.textContent = label;
+  if (profileUserNameEl) profileUserNameEl.textContent = label || "—";
+  if (profileAvatarInitialsEl) profileAvatarInitialsEl.textContent = computeInitials(label);
 }
 
 function normalizeAuthUser(rawUser, overrides = {}) {
@@ -696,6 +706,12 @@ const emailRequestErrorEl = $("#email-request-error");
 const emailCodeErrorEl = $("#email-code-error");
 const currentUserLabelEl = $("#current-user-label");
 const currentMonthLabelEl = $("#current-month-label");
+const btnProfileEl = $("#btn-profile");
+const profileDropdownEl = $("#profile-dropdown");
+const profileDropdownBackdropEl = $("#profile-dropdown-backdrop");
+const profileUserNameEl = $("#profile-user-name");
+const profileAvatarImgEl = $("#profile-avatar-img");
+const profileAvatarInitialsEl = $("#profile-avatar-initials");
 
 const lineTabsEl = $("#line-tabs");
 const btnPrevMonthEl = $("#btn-prev-month");
@@ -2030,8 +2046,30 @@ function setLegendOpen(isOpen) {
   }
 }
 
+function setProfileDropdownOpen(open) {
+  if (!profileDropdownEl) return;
+  profileDropdownEl.classList.toggle("hidden", !open);
+  profileDropdownBackdropEl?.classList.toggle("hidden", !open);
+  btnProfileEl?.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) positionPopoverNear(profileDropdownEl, btnProfileEl);
+}
+
 function bindTopBarButtons() {
   renderLineTabs();
+
+  btnProfileEl?.addEventListener("click", () => {
+    const isOpen = profileDropdownEl && !profileDropdownEl.classList.contains("hidden");
+    setProfileDropdownOpen(!isOpen);
+  });
+  profileDropdownBackdropEl?.addEventListener("click", () => setProfileDropdownOpen(false));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") setProfileDropdownOpen(false);
+  });
+  profileDropdownEl?.addEventListener("click", (e) => {
+    if (e.target.closest("#btn-theme-toggle") || e.target.closest("#btn-logout")) {
+      setProfileDropdownOpen(false);
+    }
+  });
   setLegendOpen(window.innerWidth <= 768 ? false : readLegendPref());
   updateScheduleStickyOffsets();
 
