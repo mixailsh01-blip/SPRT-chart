@@ -3,7 +3,7 @@
 // Чистый vanilla JS.
 
 import { config, getConfigValue } from "./config.js?v=8";
-import { createApiClient } from "./api/apiClient.js?v=2";
+import { createApiClient } from "./api/apiClient.js?v=3";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
@@ -211,6 +211,7 @@ const state = {
   },
   vacationsByEmployee: {},
   employeeFiltersByLine: makeByLine(() => []),
+  swap: null, // обмен сменами: выбранная первая смена { line, employeeId, employeeName, day, year, monthIndex, shift }
 };
 
 const DEFAULT_AUTH_PERMISSIONS = buildDefaultPermissions();
@@ -498,6 +499,8 @@ function handleSessionExpired() {
   if (sessionExpiredHandled) return;
   sessionExpiredHandled = true;
   resetAuthState();
+  cancelSwap();
+  stopLunchWidget();
   showLoginScreen();
   resetEmailAuthState(true);
   if (emailRequestErrorEl) emailRequestErrorEl.textContent = "Сессия истекла — войдите снова";
@@ -713,6 +716,9 @@ const quickTimeFromInputEl = $("#quick-time-from");
 const quickTimeToInputEl = $("#quick-time-to");
 const quickAmountInputEl = $("#quick-amount");
 const changeLogListEl = $("#change-log-list");
+const lunchWidgetEl = $("#lunch-widget");
+const btnLunchEl = $("#btn-lunch");
+const lunchTimerEl = $("#lunch-timer");
 const btnClearHistoryEl = $("#btn-clear-history");
 let appToastTimer = null;
 
@@ -2069,6 +2075,8 @@ function bindTopBarButtons() {
   btnLogoutEl?.addEventListener("click", () => {
     apiClient.call("auth.logout", {}).catch(() => {});
     resetAuthState();
+    cancelSwap();
+    stopLunchWidget();
 
     showLoginScreen();
     clearAuthErrors();
@@ -2875,6 +2883,12 @@ async function confirmAndDeleteVacation(row, vac) {
 }
 
 function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
+  // Режим обмена: клик выбирает вторую смену (или свободный день другого сотрудника)
+  if (state.swap) {
+    handleSwapTargetClick({ line, row, day, shift });
+    return;
+  }
+
   // Вкладка «ВСЕ»: обычного редактирования нет, но себе можно назначить отпуск
   // (см. renderQuickTemplateOptions/updateQuickModeForLine — режим доступен только тогда,
   // когда отдел определяется однозначно). Чужие строки во «ВСЕ» остаются read-only ниже.
@@ -3015,10 +3029,270 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
 }
 
 // -----------------------------
+// Обмен сменами
+// -----------------------------
+// Меняется только поле «Сотрудник» у двух задач Pyrus (или у одной — передача смены на свободный день
+// другого сотрудника). Новых задач нет, поэтому нет и дублей; проверку «две смены в один день» делает бэкенд.
+
+let swapBannerEl = null;
+let swapKeydownHandler = null;
+
+function formatSwapDate(year, monthIndex, day) {
+  return `${String(day).padStart(2, "0")}.${String(monthIndex + 1).padStart(2, "0")}`;
+}
+
+function describeSwapShift(shift) {
+  return shift?.startLocal && shift?.endLocal ? ` (${shift.startLocal}–${shift.endLocal})` : "";
+}
+
+// Обмен доступен для сохранённой в Pyrus смены: редактору её подразделения — для любой,
+// сотруднику — только для своей.
+function canStartSwap(line, employeeId, shift) {
+  if (!shift || shift.taskId == null) return false;
+  const shiftLine = shift.lineKey || line;
+  return canEditLine(shiftLine) || isOwnEmployeeId(employeeId);
+}
+
+function renderSwapBanner() {
+  const source = state.swap;
+  if (!source) {
+    swapBannerEl?.classList.add("hidden");
+    document.body.classList.remove("swap-mode");
+    return;
+  }
+  if (!swapBannerEl) {
+    swapBannerEl = document.createElement("div");
+    swapBannerEl.className = "swap-banner";
+    swapBannerEl.setAttribute("role", "status");
+    document.body.appendChild(swapBannerEl);
+  }
+  const date = formatSwapDate(source.year, source.monthIndex, source.day);
+  swapBannerEl.innerHTML = `
+    <div class="swap-banner-text">
+      <b>🔁 Обмен:</b> ${escapeHtml(source.employeeName)}, ${date}${escapeHtml(describeSwapShift(source.shift))}.
+      <span class="swap-banner-hint">Выберите смену другого сотрудника или его свободный день ${date} — чтобы передать смену.</span>
+    </div>
+    <button type="button" class="btn toggle" id="btn-swap-cancel">Отмена</button>
+  `;
+  swapBannerEl.querySelector("#btn-swap-cancel").addEventListener("click", cancelSwap);
+  swapBannerEl.classList.remove("hidden");
+  document.body.classList.add("swap-mode");
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+function beginSwap({ line, employeeId, employeeName, day, shift }) {
+  closeShiftPopover();
+  if (autoSave.running || autoSave.timer || linesWithPendingChanges().length) {
+    alert("Сначала сохраните изменения в Pyrus, потом меняйтесь сменами.");
+    return;
+  }
+  const { year, monthIndex } = state.monthMeta;
+  state.swap = { line: shift.lineKey || line, employeeId, employeeName, day, year, monthIndex, shift };
+  renderSwapBanner();
+  if (!swapKeydownHandler) {
+    swapKeydownHandler = (e) => {
+      if (e.key === "Escape" && state.swap) cancelSwap();
+    };
+    document.addEventListener("keydown", swapKeydownHandler);
+  }
+}
+
+function cancelSwap() {
+  state.swap = null;
+  renderSwapBanner();
+}
+
+async function handleSwapTargetClick({ row, day, shift }) {
+  const source = state.swap;
+  if (!source) return;
+  if (Number(row.employeeId) === Number(source.employeeId)) {
+    showAppToast("Выберите смену другого сотрудника");
+    return;
+  }
+  const { year, monthIndex } = state.monthMeta;
+  const sourceLabel = `${source.employeeName} ${formatSwapDate(source.year, source.monthIndex, source.day)}${describeSwapShift(source.shift)}`;
+  const targetDate = formatSwapDate(year, monthIndex, day);
+
+  let payload;
+  let question;
+  if (shift) {
+    if (shift.taskId == null) {
+      showAppToast("Эта смена ещё не сохранена в Pyrus");
+      return;
+    }
+    if (shift.lineKey && shift.lineKey !== source.line) {
+      showAppToast("Обмен возможен только внутри одного подразделения");
+      return;
+    }
+    payload = { task_id: source.shift.taskId, target_task_id: shift.taskId };
+    question = `Поменять смены?\n\n${sourceLabel}\n⇄\n${row.employeeName} ${targetDate}${describeSwapShift(shift)}`;
+  } else {
+    if (year !== source.year || monthIndex !== source.monthIndex || day !== source.day) {
+      showAppToast(`Чтобы передать смену, выберите свободный день ${formatSwapDate(source.year, source.monthIndex, source.day)}`);
+      return;
+    }
+    payload = { task_id: source.shift.taskId, target_employee_id: row.employeeId };
+    question = `Передать смену?\n\n${sourceLabel}\n→ ${row.employeeName}`;
+  }
+  if (!confirm(question)) return;
+
+  document.body.classList.add("swap-busy");
+  try {
+    const result = await apiClient.call("schedule.swap", payload);
+    scheduleService.applySaveResult({ tasks: result?.tasks || [] });
+    cancelSwap();
+    await reloadScheduleForCurrentMonth();
+    showAppToast(shift ? "Смены обменяны" : "Смена передана");
+  } catch (err) {
+    alert(`Не удалось поменяться сменами: ${err.message || err}`);
+  } finally {
+    document.body.classList.remove("swap-busy");
+  }
+}
+
+// -----------------------------
+// Обед: кнопка и таймер в шапке
+// -----------------------------
+// Сотрудник на смене уходит на обед: бэкенд убирает его из группы Манго, через час возвращает сам
+// (не вернулся сам — письмо руководителю). Кнопка видна, только когда сейчас идёт смена в линии.
+
+const LUNCH_POLL_MS = 60_000;
+const lunchUi = { status: null, endsAt: 0, tick: null, poll: null, refreshAfterEnd: null, busy: false, unsupported: false };
+
+function formatCountdown(totalSec) {
+  const sec = Math.max(0, Math.round(totalSec));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function renderLunchWidget() {
+  if (!lunchWidgetEl || !btnLunchEl || !lunchTimerEl) return;
+  const st = lunchUi.status;
+  const lunch = st?.lunch || null;
+  const active = lunch?.status === "active";
+  const visible = !lunchUi.unsupported && Boolean(st) && (st.onShift || Boolean(lunch));
+  lunchWidgetEl.classList.toggle("hidden", !visible);
+  lunchWidgetEl.classList.toggle("active", visible && active);
+  if (!visible) return;
+
+  if (active) {
+    const left = (lunchUi.endsAt - Date.now()) / 1000;
+    const over = left <= 0;
+    lunchTimerEl.textContent = over ? "🍽 Время вышло" : `🍽 ${formatCountdown(left)}`;
+    lunchTimerEl.title = over ? "Возвращаем в линию…" : "До автоматического возврата в линию";
+    lunchTimerEl.classList.remove("hidden");
+    lunchTimerEl.classList.toggle("overdue", over);
+    btnLunchEl.textContent = "↩ В линию";
+    btnLunchEl.title = "Закончить обед и вернуться в группу Манго";
+    btnLunchEl.disabled = lunchUi.busy;
+    return;
+  }
+
+  lunchTimerEl.classList.add("hidden");
+  btnLunchEl.textContent = lunch ? "🍽 Обед был" : "🍽 Обед";
+  btnLunchEl.disabled = lunchUi.busy || !st.canStart;
+  btnLunchEl.title = st.canStart
+    ? `Уйти на обед на ${st.lunchMinutes || 60} мин — на это время вас уберут из группы Манго`
+    : lunch
+      ? "Обед сегодня уже был"
+      : "";
+}
+
+function applyLunchStatus(status) {
+  lunchUi.status = status || null;
+  const lunch = status?.lunch;
+  const active = lunch?.status === "active";
+  if (active) lunchUi.endsAt = Date.now() + Number(lunch.remainingSec || 0) * 1000;
+
+  if (active && !lunchUi.tick) {
+    lunchUi.tick = setInterval(() => {
+      renderLunchWidget();
+      // Время вышло: бэкенд вернёт в линию в течение минуты — после этого обновим статус
+      if (Date.now() >= lunchUi.endsAt && !lunchUi.refreshAfterEnd) {
+        lunchUi.refreshAfterEnd = setTimeout(() => {
+          lunchUi.refreshAfterEnd = null;
+          refreshLunchStatus();
+        }, 70_000);
+      }
+    }, 1000);
+  } else if (!active && lunchUi.tick) {
+    clearInterval(lunchUi.tick);
+    lunchUi.tick = null;
+  }
+  renderLunchWidget();
+}
+
+async function refreshLunchStatus() {
+  if (!state.auth.sessionToken || lunchUi.unsupported) return;
+  try {
+    applyLunchStatus(await apiClient.call("lunch.status", {}));
+  } catch (err) {
+    // Старый бэкенд без обедов — просто не показываем кнопку
+    if (err?.code === "UNKNOWN_ACTION") {
+      lunchUi.unsupported = true;
+      renderLunchWidget();
+    } else {
+      console.warn("lunch.status недоступен", err);
+    }
+  }
+}
+
+function handleLunchVisibility() {
+  if (document.visibilityState === "visible") refreshLunchStatus();
+}
+
+function startLunchWidget() {
+  refreshLunchStatus();
+  if (!lunchUi.poll) {
+    lunchUi.poll = setInterval(refreshLunchStatus, LUNCH_POLL_MS);
+    document.addEventListener("visibilitychange", handleLunchVisibility);
+  }
+}
+
+function stopLunchWidget() {
+  if (lunchUi.poll) clearInterval(lunchUi.poll);
+  if (lunchUi.tick) clearInterval(lunchUi.tick);
+  if (lunchUi.refreshAfterEnd) clearTimeout(lunchUi.refreshAfterEnd);
+  lunchUi.poll = null;
+  lunchUi.tick = null;
+  lunchUi.refreshAfterEnd = null;
+  lunchUi.status = null;
+  document.removeEventListener("visibilitychange", handleLunchVisibility);
+  renderLunchWidget();
+}
+
+btnLunchEl?.addEventListener("click", async () => {
+  if (lunchUi.busy) return;
+  const active = lunchUi.status?.lunch?.status === "active";
+  if (!active) {
+    const minutes = lunchUi.status?.lunchMinutes || 60;
+    if (!confirm(`Уйти на обед на ${minutes} минут?\n\nНа это время вас уберут из группы Манго. Через ${minutes} минут вернут в линию автоматически.`)) return;
+  }
+  lunchUi.busy = true;
+  renderLunchWidget();
+  try {
+    const status = await apiClient.call(active ? "lunch.end" : "lunch.start", {});
+    applyLunchStatus(status);
+    showAppToast(active ? "Вы снова в линии" : "Приятного аппетита! Вы убраны из линии на время обеда");
+  } catch (err) {
+    alert(err.message || String(err));
+    refreshLunchStatus();
+  } finally {
+    lunchUi.busy = false;
+    renderLunchWidget();
+  }
+});
+
+// -----------------------------
 // Загрузка данных
 // -----------------------------
 
 async function loadInitialData() {
+  startLunchWidget();
   try {
     const { year, monthIndex } = state.monthMeta;
     const hadCachedEmployees = loadCachedEmployees();
@@ -4145,7 +4419,7 @@ function openVacationPopover(context, anchorEl) {
   });
 }
 function openShiftPopoverReadOnly(context, anchorEl) {
-  const { line, employeeName, day, shift } = context;
+  const { line, employeeId, employeeName, day, shift } = context;
   const { year, monthIndex } = state.monthMeta;
   
   const dateLabel = `${String(day).padStart(2, "0")}.${String(
@@ -4190,6 +4464,7 @@ function openShiftPopoverReadOnly(context, anchorEl) {
     </div>
 
     <div class="shift-popover-footer">
+      ${canStartSwap(line, employeeId, shift) ? '<button class="btn" type="button" id="shift-btn-swap" title="Поменяться сменой с другим сотрудником">🔁 Обмен</button>' : ""}
       <button class="btn" type="button" id="shift-btn-close-readonly">Закрыть</button>
     </div>
   `;
@@ -4214,6 +4489,9 @@ function openShiftPopoverReadOnly(context, anchorEl) {
   shiftPopoverEl
     .querySelector("#shift-btn-close-readonly")
     .addEventListener("click", closeShiftPopover);
+  shiftPopoverEl
+    .querySelector("#shift-btn-swap")
+    ?.addEventListener("click", () => beginSwap({ line, employeeId, employeeName, day, shift }));
 
   shiftPopoverKeydownHandler = (e) => {
     if (e.key === "Escape") closeShiftPopover();
@@ -4306,6 +4584,7 @@ function openShiftPopover(context, anchorEl) {
       <button class="btn danger" type="button" id="shift-btn-delete" ${
         hasShift ? "" : "disabled"
       }>Удалить</button>
+      ${canStartSwap(line, employeeId, shift) ? '<button class="btn" type="button" id="shift-btn-swap" title="Поменяться сменой с другим сотрудником">🔁 Обмен</button>' : ""}
       <button class="btn" type="button" id="shift-btn-cancel">${isMobileLayout() ? "Отмена" : "Закрыть"}</button>
       ${isMobileLayout() ? '<button class="btn primary" type="button" id="shift-btn-save">Сохранить</button>' : ""}
     </div>
@@ -4331,6 +4610,9 @@ function openShiftPopover(context, anchorEl) {
   shiftPopoverEl
     .querySelector("#shift-btn-cancel")
     .addEventListener("click", closeShiftPopover);
+  shiftPopoverEl
+    .querySelector("#shift-btn-swap")
+    ?.addEventListener("click", () => beginSwap({ line, employeeId, employeeName, day, shift }));
 
   const deleteBtn = shiftPopoverEl.querySelector("#shift-btn-delete");
   if (deleteBtn) {

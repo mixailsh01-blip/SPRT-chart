@@ -1,6 +1,7 @@
 // n8n Code node «API»: реализация docs/API_CONTRACT.md
-// Вход: запрос из узла «API webhook» ({ body, headers }), токен из «Pyrus: токен», флаги телефонии из «Телефония: все».
-// Выход: { status, body, email?, telUpdates? }
+// Вход: запрос из узла «API webhook» ({ body, headers }), токен из «Pyrus: токен», флаги телефонии из «Телефония: все»,
+// обеды из «Обеды: все» (sprt_lunch), смены на ближайшие дни из «Смены: таблица» (sprt_schedule).
+// Выход: { status, body, email?, telUpdates?, lunchUpdates?, notify?, mangoSync? }
 // Хранилище кодов и сессий — static data воркфлоу (сохраняется только в боевых запусках).
 
 const crypto = require('crypto');
@@ -22,6 +23,9 @@ const RESEND_MS = 60 * 1000;
 const MAX_ATTEMPTS = 5;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_VACATION_DAYS = 90;
+const LOCAL_OFFSET_MS = 240 * 60 * 1000; // UTC+4
+const LUNCH_MS = 60 * 60 * 1000; // обед — 1 час, потом сотрудник автоматически возвращается в линию
+const LUNCHES_PER_DAY = 1;
 const PATH_WHITELIST = [
   /^\/v4\/members$/,
   /^\/v4\/members\/\d+$/,
@@ -56,6 +60,12 @@ const withTelephony = (task) => {
   if (task && task.id != null) task.telephony = telMap.has(Number(task.id)) ? telMap.get(Number(task.id)) : true;
   return task;
 };
+
+// ---------- обеды (sprt_lunch: одна строка на сотрудника) и смены (sprt_schedule) ----------
+const normName = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').split(/\s+/).filter(Boolean).sort().join(' ');
+const localDay = (ms) => new Date(ms + LOCAL_OFFSET_MS).toISOString().slice(0, 10);
+const lunchRows = $('Обеды: все').all().map((i) => i.json).filter((r) => r && r.member_id != null && r.member_id !== '');
+const scheduleRows = $('Смены: таблица').all().map((i) => i.json).filter((r) => r && r.task_id != null);
 
 // ---------- Pyrus ----------
 const http = (opts) => this.helpers.httpRequest({ json: true, ...opts });
@@ -133,6 +143,73 @@ function findFieldDeep(fields, id) {
   }
   return null;
 }
+
+// item_id подразделения -> вкладка (справочник кешируется на 10 минут)
+async function departmentLines() {
+  if (store.deptCache && store.deptCache.at > now - 10 * 60e3) return store.deptCache.map;
+  const cat = await pyrus('GET', `/v4/catalogs/${CAT_DEPARTMENTS}`);
+  const map = {};
+  for (const it of cat.items || []) {
+    const name = String((it.values || [])[0] || '').trim().toUpperCase();
+    const line = LINES.find((l) => l.name.toUpperCase() === name);
+    if (line) map[it.item_id] = line.key;
+  }
+  store.deptCache = { at: now, map };
+  return map;
+}
+
+// ---------- обед ----------
+// Текущая смена сотрудника (идёт сейчас и он включён в телефонию). Сопоставление — по person_id, иначе по ФИО.
+function activeShiftOf(s) {
+  const me = normName(s.name);
+  return scheduleRows.find((r) => {
+    const mine = (r.person_id != null && r.person_id !== '' && Number(r.person_id) === Number(s.memberId)) || normName(r.name) === me;
+    const start = new Date(r.start_utc).getTime();
+    const end = new Date(r.end_utc).getTime();
+    return mine && r.telephony !== false && start <= now && end > now;
+  }) || null;
+}
+
+const lunchRowOf = (memberId) => lunchRows.find((r) => Number(r.member_id) === Number(memberId)) || null;
+
+function lunchState(s) {
+  const shift = activeShiftOf(s);
+  const row = lunchRowOf(s.memberId);
+  const start = row ? new Date(row.start_utc).getTime() : NaN;
+  const isToday = row && !Number.isNaN(start) && localDay(start) === localDay(now);
+  const active = !!row && row.status === 'active';
+  const lunch = row && (active || isToday)
+    ? {
+        status: row.status, // active | returned | auto
+        start_utc: row.start_utc,
+        end_utc: row.end_utc,
+        ended_at: row.ended_at || null,
+        overdue: row.overdue === true,
+        remainingSec: active ? Math.max(0, Math.round((new Date(row.end_utc).getTime() - now) / 1000)) : 0,
+      }
+    : null;
+  const usedToday = isToday && !active ? 1 : 0;
+  return {
+    onShift: !!shift,
+    shiftEnd: shift ? shift.end_utc : null,
+    lunch,
+    lunchMinutes: LUNCH_MS / 60000,
+    canStart: !!shift && !active && usedToday < LUNCHES_PER_DAY,
+  };
+}
+
+const lunchRow = (s, fields) => ({
+  member_id: Number(s.memberId),
+  name: s.name,
+  email: s.email,
+  dept: '',
+  start_utc: '',
+  end_utc: '',
+  status: 'returned',
+  ended_at: '',
+  overdue: false,
+  ...fields,
+});
 
 const lineByName = (name) => LINES.find((l) => l.name.toUpperCase() === String(name || '').trim().toUpperCase());
 
@@ -220,18 +297,7 @@ try {
     const edits = changes.edit?.task || [];
     const deletes = changes.deleted?.task || [];
 
-    // item_id подразделения -> вкладка (справочник кешируется на 10 минут)
-    let lineByItem = store.deptCache && store.deptCache.at > now - 10 * 60e3 ? store.deptCache.map : null;
-    if (!lineByItem) {
-      const cat = await pyrus('GET', `/v4/catalogs/${CAT_DEPARTMENTS}`);
-      lineByItem = {};
-      for (const it of cat.items || []) {
-        const name = String((it.values || [])[0] || '').trim().toUpperCase();
-        const line = LINES.find((l) => l.name.toUpperCase() === name);
-        if (line) lineByItem[it.item_id] = line.key;
-      }
-      store.deptCache = { at: now, map: lineByItem };
-    }
+    const lineByItem = await departmentLines();
     const canEditItem = (itemId) => perms[lineByItem[itemId]] === 'edit';
 
     async function assertTaskEditable(taskId) {
@@ -307,6 +373,151 @@ try {
     await runPool(jobs);
     const out = ok(result);
     out[0].json.telUpdates = telUpdates;
+    return out;
+  }
+
+  // Обмен сменами: у двух задач формы «График работы» меняется только поле «Сотрудник».
+  // Новых задач не создаётся — дублей нет, строки sprt_schedule и флаг телефонии остаются привязаны к task_id.
+  // Без target_task_id — передача смены: сотрудник задачи меняется на target_employee_id (у него в этот день не должно быть смены).
+  if (action === 'schedule.swap') {
+    const perms = permissionsFor(session.roles);
+    const idA = Number(p.task_id);
+    const idB = p.target_task_id != null && p.target_task_id !== '' ? Number(p.target_task_id) : null;
+    const targetEmployee = Number(p.target_employee_id);
+    if (!Number.isInteger(idA) || idA <= 0) return fail(400, 'BAD_REQUEST', 'Не указана смена');
+    if (idB != null && (!Number.isInteger(idB) || idB <= 0)) return fail(400, 'BAD_REQUEST', 'Не указана смена для обмена');
+    if (idB === idA) return fail(400, 'BAD_REQUEST', 'Выберите смену другого сотрудника');
+    if (idB == null && (!Number.isInteger(targetEmployee) || targetEmployee <= 0)) return fail(400, 'BAD_REQUEST', 'Не указан сотрудник');
+
+    const lineByItem = await departmentLines();
+    const loadShift = async (id) => {
+      const t = await pyrus('GET', `/v4/tasks/${id}`);
+      const task = t.task || t;
+      if (!task || task.form_id !== FORM_SCHEDULE) throw Object.assign(new Error('Задача не из формы графика'), { status: 403 });
+      const f = (fid) => (task.fields || []).find((x) => x.id === fid);
+      return {
+        id: task.id,
+        person: Number(f(F.person)?.value?.id) || null,
+        line: lineByItem[f(F.department)?.value?.item_id] || null,
+        start: new Date(f(F.due)?.value || '').getTime(),
+      };
+    };
+    const a = await loadShift(idA);
+    const b = idB != null ? await loadShift(idB) : null;
+    if (!a.person || !a.line || Number.isNaN(a.start)) return fail(400, 'BAD_REQUEST', 'В смене не заполнены сотрудник, подразделение или дата');
+    if (b && (!b.person || Number.isNaN(b.start))) return fail(400, 'BAD_REQUEST', 'В смене для обмена не заполнены сотрудник или дата');
+    if (b && b.line !== a.line) return fail(400, 'BAD_REQUEST', 'Обмен возможен только внутри одного подразделения');
+    const newPersonA = b ? b.person : targetEmployee;
+    if (newPersonA === a.person) return fail(400, 'BAD_REQUEST', 'Это смены одного сотрудника');
+
+    // Права: редактор подразделения — любые смены; сотрудник — только обмен/передача своей смены
+    const me = Number(session.memberId);
+    const isEditor = perms[a.line] === 'edit';
+    if (!isEditor && me !== a.person && !(b && me === b.person)) {
+      return fail(403, 'FORBIDDEN', 'Меняться можно только своими сменами');
+    }
+
+    // Проверка дублей: после обмена ни у кого не должно быть двух смен в один день
+    const all = await members();
+    const nameOf = (id) => {
+      const m = all.find((x) => x.id === id);
+      return m ? `${m.last_name} ${m.first_name}`.trim() : `#${id}`;
+    };
+    const reg = await pyrus('GET', `/v4/forms/${FORM_SCHEDULE}/register`);
+    const skip = new Set([a.id, b && b.id].filter(Boolean));
+    const busy = (personId, dayMs) =>
+      (reg.tasks || []).some((t) => {
+        if (skip.has(t.id)) return false;
+        const f = (fid) => (t.fields || []).find((x) => x.id === fid);
+        if (Number(f(F.person)?.value?.id) !== personId) return false;
+        const s = new Date(f(F.due)?.value || '').getTime();
+        return !Number.isNaN(s) && localDay(s) === localDay(dayMs);
+      });
+    const fmtDay = (ms) => localDay(ms).split('-').reverse().join('.');
+    if (busy(newPersonA, a.start)) {
+      return fail(409, 'DUPLICATE', `У сотрудника ${nameOf(newPersonA)} уже есть смена ${fmtDay(a.start)}`);
+    }
+    if (b && busy(a.person, b.start)) {
+      return fail(409, 'DUPLICATE', `У сотрудника ${nameOf(a.person)} уже есть смена ${fmtDay(b.start)}`);
+    }
+
+    const note = b
+      ? `Обмен сменами: ${nameOf(a.person)} ${fmtDay(a.start)} ⇄ ${nameOf(b.person)} ${fmtDay(b.start)} (График смен, ${session.name})`
+      : `Передача смены ${fmtDay(a.start)}: ${nameOf(a.person)} → ${nameOf(newPersonA)} (График смен, ${session.name})`;
+    const setPerson = (taskId, personId) =>
+      pyrus('POST', `/v4/tasks/${taskId}/comments`, { text: note, field_updates: [{ id: F.person, value: { id: personId } }] });
+
+    const tasks = [];
+    const ra = await setPerson(a.id, newPersonA);
+    if (ra && ra.task) tasks.push(withTelephony(ra.task));
+    if (b) {
+      try {
+        const rb = await setPerson(b.id, a.person);
+        if (rb && rb.task) tasks.push(withTelephony(rb.task));
+      } catch (e) {
+        // Вторая половина обмена не прошла — возвращаем первую, чтобы не остаться с двумя сменами у одного
+        await setPerson(a.id, a.person).catch(() => {});
+        throw e;
+      }
+    }
+
+    // Письма участникам обмена (кроме того, кто его сделал)
+    const notify = [];
+    for (const pid of [a.person, newPersonA]) {
+      const m = all.find((x) => x.id === pid);
+      if (!m || !m.email || pid === me) continue;
+      notify.push({
+        to: m.email,
+        subject: b ? 'Обмен сменами в графике SPRT' : 'Вам передана смена в графике SPRT',
+        html: `<p>Здравствуйте, ${m.first_name || ''}!</p><p>${note}.</p><p style="color:#5B7483">Проверьте «График смен» SPRT.</p>`,
+      });
+    }
+
+    const out = ok({ swapped: true, tasks, note });
+    out[0].json.notify = notify;
+    // Затронуты смены на сегодня — сразу пересобираем группу Манго
+    out[0].json.mangoSync = [a.start, b && b.start].some((ms) => ms && localDay(ms) === localDay(now));
+    return out;
+  }
+
+  // Обед: сотрудник на смене уходит на 1 час — его убирают из группы Манго, через час он возвращается сам
+  // (воркфлоу «SPRT: обеды — возврат в линию»). Не вернулся сам — письмо руководителю.
+  if (action === 'lunch.status') return ok(lunchState(session));
+
+  if (action === 'lunch.start') {
+    const st = lunchState(session);
+    if (st.lunch && st.lunch.status === 'active') return ok(st);
+    if (!st.onShift) return fail(400, 'NOT_ON_SHIFT', 'Сейчас у вас нет смены в линии');
+    if (!st.canStart) return fail(409, 'LUNCH_USED', 'Обед сегодня уже был');
+    const shift = activeShiftOf(session);
+    const row = lunchRow(session, {
+      dept: String(shift.podrazdelenie || ''),
+      start_utc: new Date(now).toISOString(),
+      end_utc: new Date(now + LUNCH_MS).toISOString(),
+      status: 'active',
+    });
+    const prev = lunchRowOf(session.memberId);
+    if (prev) lunchRows.splice(lunchRows.indexOf(prev), 1);
+    lunchRows.push(row);
+    const out = ok(lunchState(session));
+    out[0].json.lunchUpdates = [row];
+    return out;
+  }
+
+  if (action === 'lunch.end') {
+    const row = lunchRowOf(session.memberId);
+    if (!row || row.status !== 'active') return ok(lunchState(session));
+    const updated = lunchRow(session, {
+      dept: row.dept || '',
+      start_utc: row.start_utc,
+      end_utc: row.end_utc,
+      status: 'returned',
+      ended_at: new Date(now).toISOString(),
+      overdue: now > new Date(row.end_utc).getTime(),
+    });
+    lunchRows.splice(lunchRows.indexOf(row), 1, updated);
+    const out = ok(lunchState(session));
+    out[0].json.lunchUpdates = [updated];
     return out;
   }
 
