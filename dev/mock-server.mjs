@@ -1,6 +1,6 @@
 // dev/mock-server.mjs — локальный мок бэкенда по docs/API_CONTRACT.md.
 // Запуск: node dev/mock-server.mjs  →  http://localhost:8787
-// Отдаёт статику проекта и эмулирует POST /api (auth.*, pyrus.request, schedule.save)
+// Отдаёт статику проекта и эмулирует POST /api (auth.*, pyrus.request, schedule.save, schedule.swap, lunch.*)
 // на фейковых данных. Код входа всегда 123456.
 // config.json при этом подменяется: api.baseUrl = http://localhost:8787/api
 
@@ -47,6 +47,39 @@ function addShift(empId, dept, day, shiftIdx, startUtcHour, duration) {
 for (let d = 1; d <= 10; d++) addShift(1, "TP", d, 0, 5, 540); // 09:00 Самара = 05:00 UTC
 for (let d = 3; d <= 8; d++) addShift(2, "TP", d, 1, 17, 720);
 for (let d = 2; d <= 12; d += 2) addShift(3, "PO", d, 0, 5, 540);
+// Смена «прямо сейчас» у Петрова и Смирновой — чтобы в шапке была кнопка «Обед»
+{
+  const today = now.getUTCDate();
+  const startHour = Math.max(0, now.getUTCHours() - 2);
+  for (const empId of [1, 2]) {
+    if (!tasks.some((t) => t.fields[1].value.id === empId && new Date(t.fields[2].value).getUTCDate() === today)) {
+      addShift(empId, "TP", today, 0, startHour, 540);
+    }
+  }
+}
+
+const LOCAL_OFFSET_MS = cfg.timezone.localOffsetMin * 60000;
+const localDay = (ms) => new Date(ms + LOCAL_OFFSET_MS).toISOString().slice(0, 10);
+const LUNCH_MS = Number(process.env.LUNCH_MIN || 60) * 60000;
+const lunches = new Map(); // memberId -> { status, start, end, endedAt }
+
+function lunchState(memberId) {
+  const t = Date.now();
+  const onShift = tasks.some((task) => {
+    if (task.fields[1].value.id !== memberId) return false;
+    const s = new Date(task.fields[2].value).getTime();
+    return s <= t && s + task.fields[2].duration * 60000 > t;
+  });
+  const l = lunches.get(memberId);
+  if (l && l.status === "active" && l.end <= t) Object.assign(l, { status: "auto", endedAt: t }); // «таймер»
+  const today = l && localDay(l.start) === localDay(t);
+  const lunch = l && (l.status === "active" || today)
+    ? { status: l.status, start_utc: new Date(l.start).toISOString(), end_utc: new Date(l.end).toISOString(),
+        ended_at: l.endedAt ? new Date(l.endedAt).toISOString() : null, overdue: l.status === "auto",
+        remainingSec: l.status === "active" ? Math.round((l.end - t) / 1000) : 0 }
+    : null;
+  return { onShift, shiftEnd: null, lunch, lunchMinutes: LUNCH_MS / 60000, canStart: onShift && !lunch };
+}
 
 const vacations = [
   {
@@ -130,6 +163,39 @@ async function handleApi(req, res) {
   if (action === "schedule.save") {
     console.log("schedule.save", JSON.stringify(payload, null, 2));
     return ok(res, { created: payload.changes.create.task.length, edited: payload.changes.edit.task.length, deleted: payload.changes.deleted.task.length });
+  }
+  if (action === "schedule.swap") {
+    const a = tasks.find((t) => t.id === payload.task_id);
+    const b = payload.target_task_id != null ? tasks.find((t) => t.id === payload.target_task_id) : null;
+    if (!a || (payload.target_task_id != null && !b)) return fail(res, 404, "NOT_FOUND", "Смена не найдена");
+    const personA = a.fields[1].value.id;
+    const newA = b ? b.fields[1].value.id : Number(payload.target_employee_id);
+    const dayOf = (t) => localDay(new Date(t.fields[2].value).getTime());
+    const busy = (pid, day) => tasks.some((t) => t !== a && t !== b && t.fields[1].value.id === pid && dayOf(t) === day);
+    if (busy(newA, dayOf(a))) return fail(res, 409, "DUPLICATE", `У сотрудника уже есть смена ${dayOf(a)}`);
+    if (b && busy(personA, dayOf(b))) return fail(res, 409, "DUPLICATE", `У сотрудника уже есть смена ${dayOf(b)}`);
+    a.fields[1].value = { id: newA };
+    if (b) b.fields[1].value = { id: personA };
+    console.log("schedule.swap", JSON.stringify(payload));
+    const stamp = new Date().toISOString();
+    for (const t of [a, b].filter(Boolean)) t.last_modified_date = stamp;
+    return ok(res, { swapped: true, tasks: [a, b].filter(Boolean) });
+  }
+  if (action === "lunch.status") return ok(res, lunchState(session));
+  if (action === "lunch.start") {
+    const st = lunchState(session);
+    if (st.lunch?.status === "active") return ok(res, st);
+    if (!st.onShift) return fail(res, 400, "NOT_ON_SHIFT", "Сейчас у вас нет смены в линии");
+    if (!st.canStart) return fail(res, 409, "LUNCH_USED", "Обед сегодня уже был");
+    lunches.set(session, { status: "active", start: Date.now(), end: Date.now() + LUNCH_MS });
+    console.log("lunch.start", session);
+    return ok(res, lunchState(session));
+  }
+  if (action === "lunch.end") {
+    const l = lunches.get(session);
+    if (l && l.status === "active") Object.assign(l, { status: "returned", endedAt: Date.now() });
+    console.log("lunch.end", session);
+    return ok(res, lunchState(session));
   }
   if (action === "vacation.create") {
     const { employee_id, start_date, days, line } = payload;
