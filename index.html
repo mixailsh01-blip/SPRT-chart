@@ -141,25 +141,6 @@
             <button type="button" class="btn toggle" id="btn-lunch">🍽 Обед</button>
           </div>
 
-          <!-- Профиль: аватар с инициалами (или фото из Pyrus), выпадающее меню — тема/обед/выход -->
-          <div class="profile-menu">
-            <button type="button" class="avatar-btn" id="btn-profile" aria-haspopup="true" aria-expanded="false" title="Профиль">
-              <img id="profile-avatar-img" class="avatar-img hidden" alt="" />
-              <span id="profile-avatar-initials">--</span>
-            </button>
-            <div class="profile-dropdown-backdrop hidden" id="profile-dropdown-backdrop"></div>
-            <div class="profile-dropdown hidden" id="profile-dropdown" role="menu">
-              <div class="profile-dropdown-user">
-                <span id="profile-user-name" class="profile-user-name">—</span>
-              </div>
-              <button type="button" class="profile-dropdown-item" id="btn-theme-toggle">
-                🌙 Тема
-              </button>
-              <button type="button" class="profile-dropdown-item" id="btn-logout" title="Сбросить авторизацию">
-                🚪 Выйти
-              </button>
-            </div>
-          </div>
           <div class="schedule-actions schedule-only">
             <button type="button" class="btn toggle mobile-only" id="btn-mobile-toolbar">⚙️ Панель смены</button>
             <button type="button" class="btn toggle mobile-only" id="btn-line-tabs">🏢 Отделы</button>
@@ -180,6 +161,26 @@
             <button type="button" class="btn toggle" id="btn-next-month">
               &#8250;
             </button>
+          </div>
+
+          <!-- Профиль: аватар с фото из Pyrus (или инициалами), выпадающее меню — тема/выход -->
+          <div class="profile-menu">
+            <button type="button" class="avatar-btn" id="btn-profile" aria-haspopup="true" aria-expanded="false" title="Профиль">
+              <img id="profile-avatar-img" class="avatar-img hidden" alt="" />
+              <span id="profile-avatar-initials">--</span>
+            </button>
+            <div class="profile-dropdown-backdrop hidden" id="profile-dropdown-backdrop"></div>
+            <div class="profile-dropdown hidden" id="profile-dropdown" role="menu">
+              <div class="profile-dropdown-user">
+                <span id="profile-user-name" class="profile-user-name">—</span>
+              </div>
+              <button type="button" class="profile-dropdown-item" id="btn-theme-toggle">
+                🌙 Тема
+              </button>
+              <button type="button" class="profile-dropdown-item" id="btn-logout" title="Сбросить авторизацию">
+                🚪 Выйти
+              </button>
+            </div>
           </div>
         </div>
       </div>
