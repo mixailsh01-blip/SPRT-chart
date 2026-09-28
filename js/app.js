@@ -2,7 +2,7 @@
 // Главный модуль SPA «График смен» (SPRT-chart)
 // Чистый vanilla JS.
 
-import { config, getConfigValue } from "./config.js?v=8";
+import { config, getConfigValue } from "./config.js?v=9";
 import { createApiClient } from "./api/apiClient.js?v=3";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
@@ -1402,6 +1402,10 @@ async function requestAuthCode(errorEl) {
 function bindEmailAuth() {
   if (!emailInputEl) return;
   applyAuthTexts();
+  try {
+    const lastIdentifier = localStorage.getItem(STORAGE_KEYS.lastIdentifier);
+    if (lastIdentifier && !emailInputEl.value) emailInputEl.value = lastIdentifier;
+  } catch (e) {}
   otpInputs.forEach((input) => {
     input.addEventListener("input", handleOtpInput);
     input.addEventListener("keydown", handleOtpKeydown);
@@ -1421,6 +1425,9 @@ function bindEmailAuth() {
     }
     emailAuthState.targetEmail = identifier;
     if (emailTargetLabelEl) emailTargetLabelEl.textContent = emailInputEl.value.trim();
+    try {
+      localStorage.setItem(STORAGE_KEYS.lastIdentifier, emailInputEl.value.trim());
+    } catch (e) {}
     otpInputs.forEach((input) => {
       input.value = "";
     });
