@@ -24,8 +24,8 @@ const MAX_ATTEMPTS = 5;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_VACATION_DAYS = 90;
 const LOCAL_OFFSET_MS = 240 * 60 * 1000; // UTC+4
-const LUNCH_MS = 60 * 60 * 1000; // обед — 1 час, потом сотрудник автоматически возвращается в линию
-const LUNCHES_PER_DAY = 1;
+const DAILY_LUNCH_BUDGET_MS = 60 * 60 * 1000; // суммарно 1 час обеда в сутки — можно расходовать за сколько угодно заходов
+const MIN_LUNCH_SEGMENT_MS = 60 * 1000; // меньше минуты остатка — считаем лимит исчерпанным
 const PATH_WHITELIST = [
   /^\/v4\/members$/,
   /^\/v4\/members\/\d+$/,
@@ -170,34 +170,48 @@ function activeShiftOf(s) {
   }) || null;
 }
 
-const lunchRowOf = (memberId) => lunchRows.find((r) => Number(r.member_id) === Number(memberId)) || null;
+// Сегменты обеда сотрудника за сегодня (несколько записей в sprt_lunch — по одной на каждое «ушёл/вернулся»),
+// без отменённых. Общий лимит — DAILY_LUNCH_BUDGET_MS в сутки, использовать можно сколько угодно заходов подряд.
+const todaysSegments = (memberId) =>
+  lunchRows
+    .filter((r) => Number(r.member_id) === Number(memberId) && r.status !== 'cancelled')
+    .filter((r) => localDay(new Date(r.start_utc).getTime()) === localDay(now));
+
+const openSegmentOf = (memberId) => todaysSegments(memberId).find((r) => r.status === 'active' || r.status === 'scheduled') || null;
+
+// Сколько уже «потрачено» сегодня: у активного — сколько прошло с начала, у закрытых — фактическая длительность.
+function usedMsToday(memberId) {
+  return todaysSegments(memberId).reduce((sum, r) => {
+    const start = new Date(r.start_utc).getTime();
+    if (r.status === 'active') return sum + Math.max(0, now - start);
+    if (r.status === 'scheduled') return sum; // ещё не начался — бюджет не тронут
+    const end = r.ended_at ? new Date(r.ended_at).getTime() : new Date(r.end_utc).getTime();
+    return sum + Math.max(0, end - start);
+  }, 0);
+}
 
 function lunchState(s) {
   const shift = activeShiftOf(s);
-  const row = lunchRowOf(s.memberId);
-  const start = row ? new Date(row.start_utc).getTime() : NaN;
-  const isToday = row && !Number.isNaN(start) && localDay(start) === localDay(now);
+  const row = openSegmentOf(s.memberId);
   const active = !!row && row.status === 'active';
-  const scheduled = !!row && row.status === 'scheduled';
-  const cancelled = !!row && row.status === 'cancelled';
-  const lunch = row && !cancelled && (active || scheduled || isToday)
+  const usedMs = usedMsToday(s.memberId);
+  const remainingMs = Math.max(0, DAILY_LUNCH_BUDGET_MS - usedMs);
+  const lunch = row
     ? {
-        status: row.status, // scheduled | active | returned | auto
+        status: row.status, // scheduled | active
         start_utc: row.start_utc,
         end_utc: row.end_utc,
-        ended_at: row.ended_at || null,
-        overdue: row.overdue === true,
+        overdue: false,
         remainingSec: active ? Math.max(0, Math.round((new Date(row.end_utc).getTime() - now) / 1000)) : 0,
       }
     : null;
-  // Отменённый обед не занимает слот на сегодня — можно запланировать заново
-  const usedToday = isToday && !cancelled ? 1 : 0;
   return {
     onShift: !!shift,
     shiftEnd: shift ? shift.end_utc : null,
     lunch,
-    lunchMinutes: LUNCH_MS / 60000,
-    canStart: !!shift && usedToday < LUNCHES_PER_DAY,
+    lunchMinutes: DAILY_LUNCH_BUDGET_MS / 60000, // суточный лимит (не длительность одного захода)
+    budgetRemainingSec: Math.round(remainingMs / 1000),
+    canStart: !!shift && !row && remainingMs >= MIN_LUNCH_SEGMENT_MS,
   };
 }
 
@@ -483,18 +497,19 @@ try {
     return out;
   }
 
-  // Обед: сотрудник на смене уходит на 1 час — его убирают из группы Манго, через час он возвращается сам
-  // (воркфлоу «SPRT: обеды — возврат в линию»). Не вернулся сам — письмо руководителю.
-  // Можно начать сразу или запланировать (payload.start_at, ISO) на более позднее время этой же смены —
-  // тогда до наступления времени сотрудник остаётся в группе Манго как обычно; тот же воркфлоу раз в
-  // минуту переводит запланированный обед в активный и убирает сотрудника из группы.
+  // Обед: сотрудник на смене уходит из группы Манго на время обеда. Суточный лимит — DAILY_LUNCH_BUDGET_MS
+  // (1 час), расходовать можно за сколько угодно заходов — включать и выключать в течение смены. Заход можно
+  // начать сразу или запланировать (payload.start_at, ISO) на более позднее время этой же смены — тогда до
+  // наступления времени сотрудник остаётся в группе как обычно; воркфлоу «SPRT: обеды — возврат в линию» раз в
+  // минуту переводит запланированный заход в активный (убирает из группы) и закрывает просроченный активный
+  // заход (возвращает в группу, шлёт письмо руководителю, если сотрудник не вернулся сам).
   if (action === 'lunch.status') return ok(lunchState(session));
 
   if (action === 'lunch.start') {
     const st = lunchState(session);
-    if (st.lunch && (st.lunch.status === 'active' || st.lunch.status === 'scheduled')) return ok(st);
+    if (st.lunch) return ok(st); // уже есть открытый заход (активный или запланированный)
     if (!st.onShift) return fail(400, 'NOT_ON_SHIFT', 'Сейчас у вас нет смены в линии');
-    if (!st.canStart) return fail(409, 'LUNCH_USED', 'Обед сегодня уже был');
+    if (!st.canStart) return fail(409, 'LUNCH_USED', 'Лимит обеда на сегодня исчерпан');
     const shift = activeShiftOf(session);
     const shiftEndMs = new Date(shift.end_utc).getTime();
     let startAt = now;
@@ -506,48 +521,38 @@ try {
       startAt = Math.max(t, now);
     }
     const isImmediate = startAt <= now + 30e3;
+    // Заход ограничен остатком суточного лимита на момент старта (а не всегда часом)
+    const allotMs = Math.max(MIN_LUNCH_SEGMENT_MS, DAILY_LUNCH_BUDGET_MS - usedMsToday(session.memberId));
     const row = lunchRow(session, {
       dept: String(shift.podrazdelenie || ''),
       start_utc: new Date(startAt).toISOString(),
-      end_utc: new Date(startAt + LUNCH_MS).toISOString(),
+      end_utc: new Date(startAt + allotMs).toISOString(),
       status: isImmediate ? 'active' : 'scheduled',
     });
-    const prev = lunchRowOf(session.memberId);
-    if (prev) lunchRows.splice(lunchRows.indexOf(prev), 1);
-    lunchRows.push(row);
+    lunchRows.push(row); // новая запись — заходов за день может быть несколько, старые не трогаем
     const out = ok(lunchState(session));
-    out[0].json.lunchUpdates = [row];
+    out[0].json.lunchUpdates = [row]; // без id — «Обед: изменения» создаст новую строку в sprt_lunch
     return out;
   }
 
   if (action === 'lunch.end') {
-    const row = lunchRowOf(session.memberId);
-    // Запланированный, но ещё не начавшийся обед — отменяем, слот на сегодня освобождается
-    if (row && row.status === 'scheduled') {
-      const cancelled = lunchRow(session, {
-        dept: row.dept || '',
-        start_utc: row.start_utc,
-        end_utc: row.end_utc,
-        status: 'cancelled',
-        ended_at: new Date(now).toISOString(),
-      });
-      lunchRows.splice(lunchRows.indexOf(row), 1, cancelled);
-      const out = ok(lunchState(session));
-      out[0].json.lunchUpdates = [cancelled];
-      return out;
-    }
-    if (!row || row.status !== 'active') return ok(lunchState(session));
-    const updated = lunchRow(session, {
-      dept: row.dept || '',
-      start_utc: row.start_utc,
-      end_utc: row.end_utc,
-      status: 'returned',
-      ended_at: new Date(now).toISOString(),
-      overdue: now > new Date(row.end_utc).getTime(),
-    });
+    const row = openSegmentOf(session.memberId);
+    if (!row) return ok(lunchState(session));
+    // Запланированный, но ещё не начавшийся заход — отменяем, потраченное время не списывается
+    const updated = row.status === 'scheduled'
+      ? lunchRow(session, { id: row.id, dept: row.dept || '', start_utc: row.start_utc, end_utc: row.end_utc, status: 'cancelled', ended_at: new Date(now).toISOString() })
+      : lunchRow(session, {
+          id: row.id,
+          dept: row.dept || '',
+          start_utc: row.start_utc,
+          end_utc: row.end_utc,
+          status: 'returned',
+          ended_at: new Date(now).toISOString(),
+          overdue: now > new Date(row.end_utc).getTime(),
+        });
     lunchRows.splice(lunchRows.indexOf(row), 1, updated);
     const out = ok(lunchState(session));
-    out[0].json.lunchUpdates = [updated];
+    out[0].json.lunchUpdates = [updated]; // с id — «Обед: изменения» обновит существующую строку
     return out;
   }
 

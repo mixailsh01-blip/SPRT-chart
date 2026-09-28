@@ -3232,14 +3232,21 @@ function renderLunchWidget() {
     return;
   }
 
-  lunchTimerEl.classList.add("hidden");
-  btnLunchEl.textContent = lunch ? "🍽 Обед был" : "🍽 Обед";
+  // Нет открытого захода: можно уйти снова, пока не исчерпан суточный лимит (заходов может быть несколько)
+  const remainMin = Math.floor(Number(st.budgetRemainingSec || 0) / 60);
+  const usedSome = remainMin < (st.lunchMinutes || 60);
+  if (usedSome && remainMin > 0) {
+    lunchTimerEl.textContent = `⏳ осталось ${remainMin} мин`;
+    lunchTimerEl.title = "Остаток суточного лимита на обед";
+    lunchTimerEl.classList.remove("hidden", "overdue");
+  } else {
+    lunchTimerEl.classList.add("hidden");
+  }
+  btnLunchEl.textContent = "🍽 Обед";
   btnLunchEl.disabled = lunchUi.busy || !st.canStart;
   btnLunchEl.title = st.canStart
-    ? `Уйти на обед на ${st.lunchMinutes || 60} мин — сразу или по расписанию`
-    : lunch
-      ? "Обед сегодня уже был"
-      : "";
+    ? `Уйти на обед — сразу или по расписанию (осталось ${remainMin} мин из ${st.lunchMinutes || 60})`
+    : "Лимит обеда на сегодня исчерпан";
 }
 
 function applyLunchStatus(status) {
@@ -3352,7 +3359,12 @@ async function endOrCancelLunch() {
   try {
     const result = await apiClient.call("lunch.end", {});
     applyLunchStatus(result);
-    showAppToast(status === "scheduled" ? "Обед отменён" : "Вы снова в линии");
+    if (status === "scheduled") {
+      showAppToast("Обед отменён");
+    } else {
+      const remainMin = Math.floor(Number(result?.budgetRemainingSec || 0) / 60);
+      showAppToast(remainMin > 0 ? `Вы снова в линии. Осталось ${remainMin} мин обеда на сегодня` : "Вы снова в линии. Обед на сегодня закончен");
+    }
   } catch (err) {
     alert(err.message || String(err));
     refreshLunchStatus();
@@ -3421,19 +3433,21 @@ function closeLunchPopover() {
 function openLunchPopover() {
   if (!lunchPopoverEl || !btnLunchEl) return;
   const minutes = lunchUi.status?.lunchMinutes || 60;
+  const remainMin = Math.floor(Number(lunchUi.status?.budgetRemainingSec || 0) / 60);
   const shiftEnd = lunchUi.status?.shiftEnd;
   const nowLocal = isoToLocalHHMM(new Date().toISOString());
   const maxLocal = shiftEnd ? isoToLocalHHMM(shiftEnd) : "";
 
   lunchPopoverEl.innerHTML = `
-    <div class="lunch-popover-title">🍽 Обед (${minutes} мин)</div>
+    <div class="lunch-popover-title">🍽 Обед — осталось ${remainMin} из ${minutes} мин сегодня</div>
     <button type="button" class="btn primary full-width" id="lunch-start-now">Уйти сейчас</button>
     <div class="lunch-popover-or">или запланировать на время этой смены:</div>
     <div class="lunch-popover-row">
       <input type="time" id="lunch-start-time" value="${nowLocal}" />
       <button type="button" class="btn" id="lunch-start-later">Запланировать</button>
     </div>
-    <div class="lunch-popover-note">${maxLocal ? `Смена идёт до ${maxLocal}.` : ""} Уберём из группы Манго ровно в это время.</div>
+    <div class="lunch-popover-note">${maxLocal ? `Смена идёт до ${maxLocal}.` : ""} Можно уходить и возвращаться сколько угодно раз — лимит общий на день.
+    Если не вернуться вовремя — вернём в линию сами и сообщим руководителю.</div>
   `;
 
   lunchPopoverBackdropEl.classList.remove("hidden");
