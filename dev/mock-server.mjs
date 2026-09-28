@@ -161,6 +161,18 @@ async function handleApi(req, res) {
     return ok(res, pyrus(path));
   }
   if (action === "schedule.save") {
+    for (const t of payload.changes.create.task) {
+      tasks.push({
+        id: nextTaskId++,
+        fields: [
+          { id: F.department, type: "catalog", value: { item_id: t.department_item_id, values: [] } },
+          { id: F.person, type: "person", value: { id: t.employee_id } },
+          { id: F.due, type: "due_date_time", value: t.start, duration: Number(t.duration) },
+          { id: F.amount, type: "money", value: Number(t.amount || 0) },
+          { id: F.template, type: "catalog", value: { item_id: t.item_id, values: [] } },
+        ],
+      });
+    }
     console.log("schedule.save", JSON.stringify(payload, null, 2));
     return ok(res, { created: payload.changes.create.task.length, edited: payload.changes.edit.task.length, deleted: payload.changes.deleted.task.length });
   }
