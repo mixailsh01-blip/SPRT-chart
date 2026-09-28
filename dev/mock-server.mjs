@@ -60,8 +60,9 @@ for (let d = 2; d <= 12; d += 2) addShift(3, "PO", d, 0, 5, 540);
 
 const LOCAL_OFFSET_MS = cfg.timezone.localOffsetMin * 60000;
 const localDay = (ms) => new Date(ms + LOCAL_OFFSET_MS).toISOString().slice(0, 10);
-const LUNCH_MS = Number(process.env.LUNCH_MIN || 60) * 60000;
-const lunches = new Map(); // memberId -> { status, start, end, endedAt }
+const DAILY_LUNCH_BUDGET_MS = Number(process.env.LUNCH_MIN || 60) * 60000; // суммарно в сутки, заходов может быть несколько
+const MIN_LUNCH_SEGMENT_MS = 60000;
+const lunches = new Map(); // memberId -> [{ status, start, end, endedAt }, …] — по одному на каждый заход за всё время
 
 function shiftOf(memberId) {
   const t = Date.now();
@@ -72,28 +73,51 @@ function shiftOf(memberId) {
   }) || null;
 }
 
+function segmentsOf(memberId) {
+  return lunches.get(memberId) || [];
+}
+
+function todaysSegments(memberId) {
+  const t = Date.now();
+  return segmentsOf(memberId).filter((l) => l.status !== "cancelled" && localDay(l.start) === localDay(t));
+}
+
+function openSegmentOf(memberId) {
+  return todaysSegments(memberId).find((l) => l.status === "active" || l.status === "scheduled") || null;
+}
+
+function usedMsToday(memberId) {
+  const t = Date.now();
+  return todaysSegments(memberId).reduce((sum, l) => {
+    if (l.status === "active") return sum + Math.max(0, t - l.start);
+    if (l.status === "scheduled") return sum;
+    return sum + Math.max(0, (l.endedAt || l.end) - l.start);
+  }, 0);
+}
+
 function lunchState(memberId) {
   const t = Date.now();
   const shift = shiftOf(memberId);
   const shiftEnd = shift ? new Date(new Date(shift.fields[2].value).getTime() + shift.fields[2].duration * 60000) : null;
-  const l = lunches.get(memberId);
-  // «Таймер»: запланированный обед стартует сам, активный — сам возвращается через час
-  if (l && l.status === "scheduled" && l.start <= t) Object.assign(l, { status: "active" });
-  if (l && l.status === "active" && l.end <= t) Object.assign(l, { status: "auto", endedAt: t });
-  const today = l && localDay(l.start) === localDay(t);
-  const cancelled = l && l.status === "cancelled";
-  const lunch = l && !cancelled && (l.status === "active" || l.status === "scheduled" || today)
-    ? { status: l.status, start_utc: new Date(l.start).toISOString(), end_utc: new Date(l.end).toISOString(),
-        ended_at: l.endedAt ? new Date(l.endedAt).toISOString() : null, overdue: l.status === "auto",
-        remainingSec: l.status === "active" ? Math.round((l.end - t) / 1000) : 0 }
+  // «Таймер»: запланированный заход стартует сам, активный — сам возвращается по истечении своей доли лимита
+  for (const l of segmentsOf(memberId)) {
+    if (l.status === "scheduled" && l.start <= t) Object.assign(l, { status: "active" });
+    if (l.status === "active" && l.end <= t) Object.assign(l, { status: "auto", endedAt: t });
+  }
+  const row = openSegmentOf(memberId);
+  const active = row?.status === "active";
+  const remainingMs = Math.max(0, DAILY_LUNCH_BUDGET_MS - usedMsToday(memberId));
+  const lunch = row
+    ? { status: row.status, start_utc: new Date(row.start).toISOString(), end_utc: new Date(row.end).toISOString(),
+        overdue: false, remainingSec: active ? Math.max(0, Math.round((row.end - t) / 1000)) : 0 }
     : null;
-  const usedToday = today && !cancelled ? 1 : 0;
   return {
     onShift: !!shift,
     shiftEnd: shiftEnd ? shiftEnd.toISOString() : null,
     lunch,
-    lunchMinutes: LUNCH_MS / 60000,
-    canStart: !!shift && usedToday < 1,
+    lunchMinutes: DAILY_LUNCH_BUDGET_MS / 60000,
+    budgetRemainingSec: Math.round(remainingMs / 1000),
+    canStart: !!shift && !row && remainingMs >= MIN_LUNCH_SEGMENT_MS,
   };
 }
 
@@ -212,9 +236,9 @@ async function handleApi(req, res) {
   if (action === "lunch.status") return ok(res, lunchState(session));
   if (action === "lunch.start") {
     const st = lunchState(session);
-    if (st.lunch && (st.lunch.status === "active" || st.lunch.status === "scheduled")) return ok(res, st);
+    if (st.lunch) return ok(res, st);
     if (!st.onShift) return fail(res, 400, "NOT_ON_SHIFT", "Сейчас у вас нет смены в линии");
-    if (!st.canStart) return fail(res, 409, "LUNCH_USED", "Обед сегодня уже был");
+    if (!st.canStart) return fail(res, 409, "LUNCH_USED", "Лимит обеда на сегодня исчерпан");
     const now = Date.now();
     let startAt = now;
     if (payload.start_at) {
@@ -225,14 +249,16 @@ async function handleApi(req, res) {
       startAt = Math.max(t, now);
     }
     const isImmediate = startAt <= now + 30e3;
-    lunches.set(session, { status: isImmediate ? "active" : "scheduled", start: startAt, end: startAt + LUNCH_MS });
-    console.log("lunch.start", session, isImmediate ? "сейчас" : `на ${new Date(startAt).toISOString()}`);
+    const allotMs = Math.max(MIN_LUNCH_SEGMENT_MS, DAILY_LUNCH_BUDGET_MS - usedMsToday(session));
+    const list = lunches.get(session) || [];
+    list.push({ status: isImmediate ? "active" : "scheduled", start: startAt, end: startAt + allotMs });
+    lunches.set(session, list);
+    console.log("lunch.start", session, isImmediate ? "сейчас" : `на ${new Date(startAt).toISOString()}`, `allot=${Math.round(allotMs / 60000)}мин`);
     return ok(res, lunchState(session));
   }
   if (action === "lunch.end") {
-    const l = lunches.get(session);
-    if (l && l.status === "scheduled") Object.assign(l, { status: "cancelled", endedAt: Date.now() });
-    else if (l && l.status === "active") Object.assign(l, { status: "returned", endedAt: Date.now() });
+    const l = openSegmentOf(session);
+    if (l) Object.assign(l, l.status === "scheduled" ? { status: "cancelled", endedAt: Date.now() } : { status: "returned", endedAt: Date.now() });
     console.log("lunch.end", session);
     return ok(res, lunchState(session));
   }
