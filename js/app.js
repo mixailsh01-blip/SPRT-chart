@@ -2675,6 +2675,8 @@ async function saveLineToPyrus(currentLine) {
     const monthKey = getMonthKey(year, monthIndex);
     scheduleService.invalidateMonthSchedule(monthKey);
     await reloadScheduleForCurrentMonth();
+    // Сохранённая смена могла начаться прямо сейчас — не ждать до минуты опроса
+    refreshLunchStatus();
   } catch (err) {
     console.error("saveLineToPyrus error", err);
     throw err;
@@ -3145,6 +3147,7 @@ async function handleSwapTargetClick({ row, day, shift }) {
     scheduleService.applySaveResult({ tasks: result?.tasks || [] });
     cancelSwap();
     await reloadScheduleForCurrentMonth();
+    refreshLunchStatus();
     showAppToast(shift ? "Смены обменяны" : "Смена передана");
   } catch (err) {
     alert(`Не удалось поменяться сменами: ${err.message || err}`);
