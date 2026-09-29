@@ -1109,15 +1109,16 @@ function persistLocalChanges() {
   } catch (err) {
     console.warn("Не удалось сохранить локальные смены", err);
   }
-  // Телефон — автосохранение; ПК — изменения копятся и уходят по кнопке «Сохранить в Pyrus»
-  if (isMobileLayout()) scheduleAutoSave();
-  else updateSaveButtonState();
+  // Автосохранение и на телефоне, и на ПК: любое изменение уходит в Pyrus через короткую паузу
+  scheduleAutoSave();
 }
 
 // ---------- Сохранение в Pyrus ----------
-// Телефон: любое изменение уходит в Pyrus само, через короткую паузу (серия кликов — один запрос).
-// ПК: правки копятся локально, отправка — общей кнопкой «Сохранить в Pyrus».
-const AUTOSAVE_DELAY_MS = 1200;
+// Любое изменение уходит в Pyrus само, через короткую паузу (серия кликов — один запрос).
+// На ПК пауза дольше: там чаще правят время руками и делают серии правок подряд.
+// Кнопка «Сохранить в Pyrus» остаётся: по ней можно отправить сразу или повторить после ошибки.
+const AUTOSAVE_DELAY_MS_MOBILE = 1200;
+const AUTOSAVE_DELAY_MS_DESKTOP = 2000;
 const autoSave = { timer: null, running: false, again: false, error: null };
 
 function isMobileLayout() {
@@ -1128,7 +1129,7 @@ function linesWithPendingChanges() {
   return LINE_KEYS.filter((line) => countChangesForLine(line) > 0 && canEditLine(line));
 }
 
-function scheduleAutoSave(delayMs = AUTOSAVE_DELAY_MS) {
+function scheduleAutoSave(delayMs = isMobileLayout() ? AUTOSAVE_DELAY_MS_MOBILE : AUTOSAVE_DELAY_MS_DESKTOP) {
   if (autoSave.timer) clearTimeout(autoSave.timer);
   autoSave.timer = setTimeout(runAutoSave, delayMs);
   updateSaveButtonState();
@@ -1157,7 +1158,7 @@ async function runAutoSave() {
     for (const line of lines) await saveLineToPyrus(line);
   } catch (err) {
     autoSave.error = err;
-    if (!isMobileLayout()) alert(`Не удалось отправить в Pyrus: ${err.message || err}`);
+    // Ошибка видна на кнопке («Не сохранено — повторить»), отдельное окно не нужно
   } finally {
     autoSave.running = false;
     updateSaveButtonState();
@@ -2495,8 +2496,8 @@ function updateSaveButtonState() {
   const changesCount = countChangesForLine(currentLine);
   const isCached = state.ui.isScheduleCached;
   
-  const mobile = isMobileLayout();
-  btnSavePyrusEl.classList.toggle("save-status", mobile);
+  const mobile = true; // автосохранение работает и на ПК: кнопка показывает статус
+  btnSavePyrusEl.classList.toggle("save-status", isMobileLayout());
   btnSavePyrusEl.classList.remove("is-error", "is-saving");
   if (!canEdit) {
     btnSavePyrusEl.textContent = isCached ? `Данные загружаются…` : `Только просмотр`;
@@ -3870,8 +3871,8 @@ async function reloadScheduleForCurrentMonth({ showCached = false, isRetry = fal
       if (!state.ui.isScheduleCached) {
         state.ui.scheduleLoadError = null;
         scheduleRetry.attempt = 0;
-        // Правки, сделанные пока шла загрузка, — отправить (на ПК — по кнопке)
-        if (isMobileLayout() && linesWithPendingChanges().length) scheduleAutoSave(500);
+        // Правки, сделанные пока шла загрузка, — отправить
+        if (linesWithPendingChanges().length) scheduleAutoSave(500);
       } else {
         // Запрос отработал без ошибки, но его результат не применили (например, устарел —
         // его обогнал более новый запрос). Раньше на этом интерфейс замирал на «Данные
@@ -4119,6 +4120,13 @@ async function reloadScheduleForCurrentMonthInner() {
     });
 
     scheduleByLine[line] = { monthKey, days, rows };
+  }
+
+  // Отпуска обычно уже в кэше или почти готовы: даём им до 600 мс догнать, чтобы отрисовать
+  // график один раз, а не дважды (полная перерисовка таблицы — самая тяжёлая операция интерфейса).
+  if (!vacationsLoaded) {
+    await Promise.race([vacationsPromise, new Promise((resolve) => setTimeout(resolve, 600))]);
+    if (monthKey !== getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex)) return;
   }
 
   state.originalScheduleByLine = deepClone(scheduleByLine);
@@ -4913,7 +4921,7 @@ function openShiftPopover(context, anchorEl) {
         <div class="shift-popover-note">
           ${isMobileLayout()
             ? "Кнопка «Сохранить» сразу отправляет смену в Pyrus."
-            : "Изменения применяются сразу, в Pyrus уходят по кнопке «Сохранить в Pyrus»."}
+            : "Изменения сохраняются в Pyrus автоматически через пару секунд."}
         </div>
       </div>
     </div>
@@ -5058,7 +5066,7 @@ function openShiftPopover(context, anchorEl) {
     if (commitPopover()) scheduleAutoSave(0);
   });
 
-  // На ПК кнопки в окне нет: правка применяется сразу, в Pyrus — общей кнопкой «Сохранить в Pyrus»
+  // На ПК кнопки в окне нет: правка применяется сразу, в Pyrus уходит автосохранением
   if (!isMobileLayout()) {
     shiftPopoverEl
       .querySelectorAll("#shift-start-input, #shift-end-input, #shift-amount-input, #shift-telephony-input")

@@ -3589,13 +3589,29 @@ body.dark-theme {
   color: #FFFFFF;
 }
 
-/* Индикатор загрузки месяца */
-.schedule-container.is-loading .schedule-scroll {
-  opacity: 0.55;
-  transition: opacity 0.15s ease;
+/* Индикатор загрузки месяца: график не затемняем (кэш уже показан и с ним можно работать),
+   о загрузке говорит тонкая бегущая полоска сверху */
+.schedule-container {
+  position: relative;
 }
-.schedule-container.is-loading {
-  cursor: progress;
+.schedule-container.is-loading::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 30%;
+  height: 2px;
+  z-index: 30;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--sprt-red, #E02B3D), transparent);
+  animation: schedule-loading-bar 1.1s ease-in-out infinite;
+}
+@keyframes schedule-loading-bar {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .schedule-container.is-loading::before { animation: none; width: 100%; opacity: 0.5; }
 }
 
 /* ===== Индикатор телефонии ===== */
