@@ -3578,6 +3578,7 @@ function openLunchPopover() {
 
 btnLunchEl?.addEventListener("click", () => {
   if (lunchUi.busy) return;
+  setProfileDropdownOpen(false);
   const status = lunchUi.status?.lunch?.status;
   if (status === "active" || status === "scheduled") {
     endOrCancelLunch();
@@ -3598,6 +3599,8 @@ async function loadInitialData() {
     const hadCachedEmployees = loadCachedEmployees();
     const hadCachedTemplates = loadCachedShiftTemplates();
     const hadCachedSchedule = loadCachedScheduleForMonth(year, monthIndex);
+
+    if (hadCachedEmployees) updateProfileAvatarImage();
 
     if (hadCachedTemplates) {
       initQuickAssignPanel();
