@@ -5,7 +5,10 @@ const SCHEDULE_TTL_MS = 90_000;
 const REGISTER_CACHE_KEY = "pyrus:schedule:register";
 // Реестр Pyrus обновляется с задержкой: только что созданные/изменённые задачи
 // какое-то время в нём не видны. Держим результат сохранения поверх реестра.
-const RECENT_WRITES_TTL_MS = 5 * 60_000;
+const RECENT_WRITES_TTL_MS = 30 * 60_000;
+// Переживает перезагрузку страницы: без этого только что поставленная смена видна до F5,
+// а после пропадает, пока реестр Pyrus не догонит.
+const RECENT_WRITES_STORAGE_KEY = "sprt-chart:schedule:recentWrites:v1";
 
 export function createScheduleService({ pyrusClient, formId } = {}) {
   if (!pyrusClient || typeof pyrusClient.pyrusRequest !== "function") {
@@ -16,10 +19,41 @@ export function createScheduleService({ pyrusClient, formId } = {}) {
   const recentUpserts = new Map(); // task_id -> { task, at }
   const recentDeletes = new Map(); // task_id -> at
 
+  function persistRecentWrites() {
+    try {
+      localStorage.setItem(
+        RECENT_WRITES_STORAGE_KEY,
+        JSON.stringify({ upserts: Object.fromEntries(recentUpserts), deletes: Object.fromEntries(recentDeletes) })
+      );
+    } catch (_) {
+      // localStorage недоступен — просто без переживания перезагрузки
+    }
+  }
+
+  function loadPersistedRecentWrites() {
+    try {
+      const raw = localStorage.getItem(RECENT_WRITES_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const border = Date.now() - RECENT_WRITES_TTL_MS;
+      for (const [id, v] of Object.entries(parsed?.upserts || {})) {
+        if (v && Number(v.at) >= border) recentUpserts.set(Number(id), v);
+      }
+      for (const [id, at] of Object.entries(parsed?.deletes || {})) {
+        if (Number(at) >= border) recentDeletes.set(Number(id), Number(at));
+      }
+    } catch (_) {
+      // повреждённые данные — игнорируем
+    }
+  }
+  loadPersistedRecentWrites();
+
   function pruneRecent() {
     const border = Date.now() - RECENT_WRITES_TTL_MS;
-    for (const [id, v] of recentUpserts) if (v.at < border) recentUpserts.delete(id);
-    for (const [id, at] of recentDeletes) if (at < border) recentDeletes.delete(id);
+    let pruned = false;
+    for (const [id, v] of recentUpserts) if (v.at < border) { recentUpserts.delete(id); pruned = true; }
+    for (const [id, at] of recentDeletes) if (at < border) { recentDeletes.delete(id); pruned = true; }
+    if (pruned) persistRecentWrites();
   }
 
   function withRecentWrites(data) {
@@ -56,6 +90,7 @@ export function createScheduleService({ pyrusClient, formId } = {}) {
       recentDeletes.set(id, at);
       recentUpserts.delete(id);
     }
+    persistRecentWrites();
   }
 
   async function loadMonthSchedule(monthKey, { force } = {}) {
