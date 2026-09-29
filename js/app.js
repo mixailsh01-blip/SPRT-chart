@@ -1197,6 +1197,8 @@ const emailAuthState = {
   challengeId: null,
   resendRemaining: 0,
   timerId: null,
+  sendCooldownRemaining: 0,
+  sendCooldownTimerId: null,
 };
 
 const AUTH_IDENTIFIER = config.auth?.identifier || { type: "phone" };
@@ -1249,8 +1251,11 @@ function clearAuthErrors() {
 
 function resetEmailAuthState(keepEmail = true) {
   clearResendTimer();
+  clearSendCooldown();
+  if (emailSendButtonEl) emailSendButtonEl.disabled = false;
   emailAuthState.step = "request";
   emailAuthState.resendRemaining = 0;
+  emailAuthState.sendCooldownRemaining = 0;
   emailAuthState.challengeId = null;
   if (!keepEmail && emailInputEl) emailInputEl.value = "";
   if (emailTargetLabelEl) emailTargetLabelEl.textContent = "—";
@@ -1350,6 +1355,34 @@ function clearResendTimer() {
   }
 }
 
+// Таймер на кнопке «Получить код» после 429 RATE_LIMITED — текст обратного отсчёта, а не застывшая цифра.
+function clearSendCooldown() {
+  if (emailAuthState.sendCooldownTimerId) {
+    clearInterval(emailAuthState.sendCooldownTimerId);
+    emailAuthState.sendCooldownTimerId = null;
+  }
+}
+
+function startSendCooldown(seconds, errorEl) {
+  clearSendCooldown();
+  emailAuthState.sendCooldownRemaining = Math.max(1, Math.round(seconds));
+  const tick = () => {
+    if (errorEl) errorEl.textContent = `Слишком часто. Повторите через ${emailAuthState.sendCooldownRemaining} с`;
+    if (emailSendButtonEl) emailSendButtonEl.disabled = emailAuthState.sendCooldownRemaining > 0;
+  };
+  tick();
+  emailAuthState.sendCooldownTimerId = setInterval(() => {
+    emailAuthState.sendCooldownRemaining -= 1;
+    if (emailAuthState.sendCooldownRemaining <= 0) {
+      clearSendCooldown();
+      if (errorEl) errorEl.textContent = "";
+      if (emailSendButtonEl) emailSendButtonEl.disabled = false;
+      return;
+    }
+    tick();
+  }, 1000);
+}
+
 function startResendTimer() {
   clearResendTimer();
   emailAuthState.resendRemaining = AUTH_RESEND_SEC;
@@ -1391,12 +1424,12 @@ async function requestAuthCode(errorEl) {
     emailAuthState.challengeId = result?.challengeId ?? null;
     return true;
   } catch (err) {
-    if (errorEl) {
+    if (err?.code === "RATE_LIMITED") {
+      startSendCooldown(err.retryAfterSec || AUTH_RESEND_SEC, errorEl);
+    } else if (errorEl) {
       errorEl.textContent =
         err?.code === "NOT_FOUND"
           ? "Сотрудник не найден — укажите данные, которые используете в Pyrus"
-          : err?.code === "RATE_LIMITED"
-          ? `Слишком часто. Повторите через ${err.retryAfterSec || AUTH_RESEND_SEC} с`
           : err?.message || "Не удалось отправить код";
     }
     return false;
@@ -1484,7 +1517,7 @@ function bindEmailAuth() {
     });
     emailSendButtonEl.disabled = true;
     const ok = await requestAuthCode(emailRequestErrorEl);
-    emailSendButtonEl.disabled = false;
+    if (!emailAuthState.sendCooldownTimerId) emailSendButtonEl.disabled = false;
     if (!ok) return;
     setEmailAuthStep("code");
     startResendTimer();
