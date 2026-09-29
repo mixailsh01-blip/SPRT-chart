@@ -45,7 +45,6 @@ for (const [k, v] of Object.entries(store.sessions)) if (!v || v.exp < now) dele
 
 const hmac = (s) => crypto.createHmac('sha256', store.secret).update(String(s)).digest('hex');
 const ok = (data, email, extra = {}) => [{ json: { status: 200, body: { ok: true, data }, email: email || null, ...extra } }];
-const APP_URL = 'https://mixailsh01-blip.github.io/SPRT-chart/';
 const fail = (status, code, message, extra = {}) => [
   { json: { status, body: { ok: false, error: { code, message, ...extra } }, email: null } },
 ];
@@ -252,13 +251,14 @@ try {
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
     store.codes[email] = { hash: hmac(`c:${email}:${code}`), exp: now + CODE_TTL_MS, attempts: MAX_ATTEMPTS, sentAt: now, memberId: m.id };
     const name = `${m.first_name} ${m.last_name}`.trim();
-    const loginUrl = `${APP_URL}?li_email=${encodeURIComponent(email)}&li_code=${code}`;
-    // Продублировать код и ссылку в Pyrus (задача на форме «Уведомления сотрудникам», form_id 2472006) —
-    // письмо иногда попадает в спам, а в Pyrus сотрудник видит уведомление сразу.
+    // Продублировать код в Pyrus (задача на форме «Уведомления сотрудникам», form_id 2472006, поле 8 «Тип» =
+    // choice_id 1 «Авторизация в график», поле 6 «Авторизация графика» = query-строка для кнопки «Войти в
+    // график», которую Pyrus сам собирает в ссылку) — письмо иногда попадает в спам, а в Pyrus сотрудник видит
+    // уведомление сразу.
     return ok(
       { challengeId: email, ttlSec: CODE_TTL_MS / 1000 },
       { to: m.email, code, name },
-      { pyrusNotify: { memberId: m.id, text: `Код входа в «График смен»: ${code}\nСсылка для быстрого входа: ${loginUrl}\nДействует 10 минут.` } }
+      { pyrusNotify: { memberId: m.id, query: `li_email=${encodeURIComponent(email)}&li_code=${code}` } }
     );
   }
 
