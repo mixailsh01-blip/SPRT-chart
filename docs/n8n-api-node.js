@@ -252,13 +252,14 @@ try {
     store.codes[email] = { hash: hmac(`c:${email}:${code}`), exp: now + CODE_TTL_MS, attempts: MAX_ATTEMPTS, sentAt: now, memberId: m.id };
     const name = `${m.first_name} ${m.last_name}`.trim();
     // Продублировать код в Pyrus (задача на форме «Уведомления сотрудникам», form_id 2472006, поле 8 «Тип» =
-    // choice_id 1 «Авторизация в график», поле 6 «Авторизация графика» = query-строка для кнопки «Войти в
-    // график», которую Pyrus сам собирает в ссылку) — письмо иногда попадает в спам, а в Pyrus сотрудник видит
-    // уведомление сразу.
+    // choice_id 1 «Авторизация в график», поле 6 «Почта» = email, поле 9 «Пин-код» = код) — кнопка «Войти в
+    // график» (custom_url: .../?li_email=${email}&li_code=${password}) сама собирает ссылку и кодирует
+    // значения полей; здесь пишем «сырые» email/код, без ручного кодирования. Письмо иногда попадает в спам,
+    // а в Pyrus сотрудник видит уведомление сразу.
     return ok(
       { challengeId: email, ttlSec: CODE_TTL_MS / 1000 },
       { to: m.email, code, name },
-      { pyrusNotify: { memberId: m.id, query: `li_email=${encodeURIComponent(email)}&li_code=${code}` } }
+      { pyrusNotify: { memberId: m.id, email, code } }
     );
   }
 
