@@ -3932,26 +3932,32 @@ body.quick-delete-active .schedule-table td.vacation-cell:hover .vacation-pill {
   filter: brightness(1.1);
 }
 
-/* ---------- Обед: кнопка и таймер в шапке ---------- */
+/* ---------- Обед: пункт в выпадающем меню профиля ---------- */
 .lunch-widget {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
 }
 .lunch-widget.hidden,
 .lunch-timer.hidden {
   display: none;
 }
+.lunch-widget #btn-lunch {
+  flex: 1;
+}
 .lunch-timer {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  font-size: 13px;
-  padding: 6px 12px;
+  font-size: 12px;
+  padding: 4px 10px;
+  margin-right: 6px;
   border-radius: 999px;
   background: var(--accent-soft);
   border: 1px solid var(--accent);
   color: var(--text);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .lunch-timer.overdue {
   background: rgba(224, 43, 61, 0.14);
@@ -3959,7 +3965,7 @@ body.quick-delete-active .schedule-table td.vacation-cell:hover .vacation-pill {
   color: var(--danger);
 }
 .lunch-widget.active #btn-lunch {
-  border: 1px solid var(--accent);
+  color: var(--accent);
 }
 
 /* ---------- Обмен сменами ---------- */
@@ -4005,13 +4011,6 @@ body.swap-busy #schedule-root {
 @media (max-width: 768px) {
   .swap-banner {
     bottom: 10px;
-    font-size: 12px;
-  }
-  .lunch-timer {
-    height: 34px;
-    display: inline-flex;
-    align-items: center;
-    padding: 0 12px;
     font-size: 12px;
   }
 }
