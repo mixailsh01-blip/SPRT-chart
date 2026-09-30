@@ -4200,3 +4200,17 @@ body.swap-mode .app-toast {
 }
 .time-pick select:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); }
 .time-pick-sep { color: var(--text-muted); font-weight: 600; }
+
+/* Поля часов и минут: ввод руками, стрелки появляются при наведении/фокусе */
+.time-pick input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  padding: 6px 4px;
+  -moz-appearance: textfield;
+}
+.time-pick input[type="number"]::-webkit-inner-spin-button { opacity: 0; transition: opacity 0.15s ease; }
+.time-pick input[type="number"]:hover::-webkit-inner-spin-button,
+.time-pick input[type="number"]:focus::-webkit-inner-spin-button { opacity: 1; }

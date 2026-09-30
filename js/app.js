@@ -4862,18 +4862,26 @@ function openShiftPopoverReadOnly(context, anchorEl) {
 function timePickerHtml(id, value) {
   const v = normalizeTimeHHMM(value || "");
   const [hh, mm] = v ? v.split(":") : ["", ""];
-  const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
-  const minSet = new Set(Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0")));
-  if (mm) minSet.add(mm);
-  const mins = [...minSet].sort();
-  const opts = (list, cur) =>
-    `<option value="">--</option>` + list.map((x) => `<option value="${x}"${x === cur ? " selected" : ""}>${x}</option>`).join("");
   return `<div class="time-pick" data-time-pick="${id}">
-    <select class="time-pick-h" aria-label="Часы">${opts(hours, hh)}</select>
+    <input class="time-pick-h" type="number" inputmode="numeric" min="0" max="23" step="1" placeholder="--" aria-label="Часы" value="${hh ? Number(hh) : ""}">
     <span class="time-pick-sep">:</span>
-    <select class="time-pick-m" aria-label="Минуты">${opts(mins, mm)}</select>
+    <input class="time-pick-m" type="number" inputmode="numeric" min="0" max="59" step="1" placeholder="--" aria-label="Минуты" value="${mm !== "" ? mm : ""}">
     <input type="hidden" id="${id}" value="${v}">
   </div>`;
+}
+
+function readTimePick(box) {
+  const h = box.querySelector(".time-pick-h");
+  const m = box.querySelector(".time-pick-m");
+  const hidden = box.querySelector("input[type=hidden]");
+  const hv = h.value === "" ? NaN : Number(h.value);
+  let mv = m.value === "" ? NaN : Number(m.value);
+  if (Number.isFinite(hv) && !Number.isFinite(mv)) mv = 0;
+  hidden.value =
+    Number.isInteger(hv) && Number.isInteger(mv) && hv >= 0 && hv <= 23 && mv >= 0 && mv <= 59
+      ? `${String(hv).padStart(2, "0")}:${String(mv).padStart(2, "0")}`
+      : "";
+  return hidden.value;
 }
 
 function setTimePickerValue(id, value) {
@@ -4884,13 +4892,8 @@ function setTimePickerValue(id, value) {
   const box = hidden.closest(".time-pick");
   if (!box) return;
   const [hh, mm] = v ? v.split(":") : ["", ""];
-  const hSel = box.querySelector(".time-pick-h");
-  const mSel = box.querySelector(".time-pick-m");
-  hSel.value = hh;
-  if (mm && ![...mSel.options].some((o) => o.value === mm)) {
-    mSel.add(new Option(mm, mm));
-  }
-  mSel.value = mm;
+  box.querySelector(".time-pick-h").value = hh ? Number(hh) : "";
+  box.querySelector(".time-pick-m").value = mm;
 }
 
 function openShiftPopover(context, anchorEl) {
@@ -5156,37 +5159,44 @@ function openShiftPopover(context, anchorEl) {
   });
 
   // На ПК кнопки в окне нет: правка применяется сразу, в Pyrus уходит автосохранением
-  if (!isMobileLayout()) {
-    autoSaveHeld = true;
-    const live = () => commitPopover({ close: false, silent: true });
-    shiftPopoverEl.querySelectorAll(".time-pick").forEach((box) => {
-      const hidden = box.querySelector("input[type=hidden]");
-      const h = box.querySelector(".time-pick-h");
-      const m = box.querySelector(".time-pick-m");
-      const sync = (e) => {
-        // выбрали часы — минуты по умолчанию 00
-        if (e?.target === h && h.value && !m.value) m.value = "00";
-        hidden.value = h.value && m.value ? `${h.value}:${m.value}` : "";
-        live();
-      };
-      h.addEventListener("change", sync);
-      m.addEventListener("change", sync);
+  const desktop = !isMobileLayout();
+  if (desktop) autoSaveHeld = true;
+  const live = () => commitPopover({ close: false, silent: true });
+  shiftPopoverEl.querySelectorAll(".time-pick").forEach((box) => {
+    const h = box.querySelector(".time-pick-h");
+    const m = box.querySelector(".time-pick-m");
+    const onInput = () => {
+      readTimePick(box);
+      if (desktop) live();
+    };
+    h.addEventListener("input", onInput);
+    m.addEventListener("input", onInput);
+    // Стрелками вверх/вниз значения идут по кругу: 59 → 00, 23 → 00
+    for (const [el, max] of [[h, 23], [m, 59]]) {
+      el.addEventListener("keydown", (e) => {
+        if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+        e.preventDefault();
+        const cur = el.value === "" ? 0 : Number(el.value);
+        const next = e.key === "ArrowUp" ? (cur + 1) % (max + 1) : (cur + max) % (max + 1);
+        el.value = el === m ? String(next).padStart(2, "0") : String(next);
+        onInput();
+      });
+    }
+    // При уходе из поля показываем минуты как 05, а пустые минуты дополняем нулём
+    m.addEventListener("blur", () => {
+      if (m.value !== "") m.value = String(Math.min(59, Math.max(0, Number(m.value) || 0))).padStart(2, "0");
     });
-    const amountEl = shiftPopoverEl.querySelector("#shift-amount-input");
-    amountEl?.addEventListener("input", live);
+    h.addEventListener("blur", () => {
+      if (h.value !== "") h.value = String(Math.min(23, Math.max(0, Number(h.value) || 0)));
+      if (h.value !== "" && m.value === "") m.value = "00";
+      onInput();
+    });
+    h.addEventListener("focus", () => h.select());
+    m.addEventListener("focus", () => m.select());
+  });
+  if (desktop) {
+    shiftPopoverEl.querySelector("#shift-amount-input")?.addEventListener("input", live);
     shiftPopoverEl.querySelector("#shift-telephony-input")?.addEventListener("change", live);
-  } else {
-    shiftPopoverEl.querySelectorAll(".time-pick").forEach((box) => {
-      const hidden = box.querySelector("input[type=hidden]");
-      const h = box.querySelector(".time-pick-h");
-      const m = box.querySelector(".time-pick-m");
-      const sync = (e) => {
-        if (e?.target === h && h.value && !m.value) m.value = "00";
-        hidden.value = h.value && m.value ? `${h.value}:${m.value}` : "";
-      };
-      h.addEventListener("change", sync);
-      m.addEventListener("change", sync);
-    });
   }
 
   shiftPopoverKeydownHandler = (e) => {
