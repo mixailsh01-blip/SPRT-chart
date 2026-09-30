@@ -2920,6 +2920,19 @@ async function refreshVacationsForCurrentMonth() {
   renderScheduleCurrentLine();
 }
 
+// Пока выбран первый день отпуска, при движении мыши подсвечиваем весь период до курсора
+function previewVacationRange(tr, line, employeeId, hoverDay) {
+  const vs = state.quickMode.vacationStart;
+  document.querySelectorAll("td.vacation-preview").forEach((c) => c.classList.remove("vacation-preview"));
+  if (!vs || vs.line !== line || vs.employeeId !== employeeId) return;
+  const from = Math.min(vs.day, hoverDay);
+  const to = Math.max(vs.day, hoverDay);
+  tr.querySelectorAll("td[data-day]").forEach((c) => {
+    const d = Number(c.dataset.day);
+    if (d >= from && d <= to) c.classList.add("vacation-preview");
+  });
+}
+
 function handleVacationRangeClick({ line, row, day }) {
   if (state.ui.isScheduleCached) {
     alert("Дождитесь загрузки свежего графика из Pyrus — без него нельзя проверить смены в периоде отпуска.");
@@ -4541,8 +4554,10 @@ th1.appendChild(th1Label);
         });
       });
 
+      td.dataset.day = String(dayNumber);
       td.addEventListener("mouseenter", () => {
         tr.classList.add("row-hover");
+        previewVacationRange(tr, line, row.employeeId, dayNumber);
       });
       td.addEventListener("mouseleave", () => {
         tr.classList.remove("row-hover");
