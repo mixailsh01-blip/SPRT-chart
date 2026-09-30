@@ -1129,7 +1129,14 @@ function linesWithPendingChanges() {
   return LINE_KEYS.filter((line) => countChangesForLine(line) > 0 && canEditLine(line));
 }
 
+// Пока открыто окно смены на ПК, правки видны в графике сразу, а в Pyrus уходят при закрытии окна
+let autoSaveHeld = false;
+
 function scheduleAutoSave(delayMs = isMobileLayout() ? AUTOSAVE_DELAY_MS_MOBILE : AUTOSAVE_DELAY_MS_DESKTOP) {
+  if (autoSaveHeld) {
+    updateSaveButtonState();
+    return;
+  }
   if (autoSave.timer) clearTimeout(autoSave.timer);
   autoSave.timer = setTimeout(runAutoSave, delayMs);
   updateSaveButtonState();
@@ -4641,6 +4648,11 @@ function positionShiftPopover(anchorEl) {
 function closeShiftPopover() {
   if (!shiftPopoverEl) return;
 
+  if (autoSaveHeld) {
+    autoSaveHeld = false;
+    if (linesWithPendingChanges().length) scheduleAutoSave(0);
+  }
+
   shiftPopoverEl.classList.remove("open");
   shiftPopoverBackdropEl.classList.add("hidden");
 
@@ -4847,6 +4859,40 @@ function openShiftPopoverReadOnly(context, anchorEl) {
   document.addEventListener("keydown", shiftPopoverKeydownHandler);
 }
 
+function timePickerHtml(id, value) {
+  const v = normalizeTimeHHMM(value || "");
+  const [hh, mm] = v ? v.split(":") : ["", ""];
+  const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+  const minSet = new Set(Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0")));
+  if (mm) minSet.add(mm);
+  const mins = [...minSet].sort();
+  const opts = (list, cur) =>
+    `<option value="">--</option>` + list.map((x) => `<option value="${x}"${x === cur ? " selected" : ""}>${x}</option>`).join("");
+  return `<div class="time-pick" data-time-pick="${id}">
+    <select class="time-pick-h" aria-label="Часы">${opts(hours, hh)}</select>
+    <span class="time-pick-sep">:</span>
+    <select class="time-pick-m" aria-label="Минуты">${opts(mins, mm)}</select>
+    <input type="hidden" id="${id}" value="${v}">
+  </div>`;
+}
+
+function setTimePickerValue(id, value) {
+  const hidden = document.getElementById(id);
+  if (!hidden) return;
+  const v = normalizeTimeHHMM(value || "");
+  hidden.value = v;
+  const box = hidden.closest(".time-pick");
+  if (!box) return;
+  const [hh, mm] = v ? v.split(":") : ["", ""];
+  const hSel = box.querySelector(".time-pick-h");
+  const mSel = box.querySelector(".time-pick-m");
+  hSel.value = hh;
+  if (mm && ![...mSel.options].some((o) => o.value === mm)) {
+    mSel.add(new Option(mm, mm));
+  }
+  mSel.value = mm;
+}
+
 function openShiftPopover(context, anchorEl) {
   const { line, employeeId, employeeName, day, shift } = context;
   const { year, monthIndex } = state.monthMeta;
@@ -4909,16 +4955,12 @@ function openShiftPopover(context, anchorEl) {
 
         <div class="field-row">
           <label>Начало</label>
-          <input type="time" id="shift-start-input" value="${
-            shift?.startLocal || ""
-          }">
+          ${timePickerHtml("shift-start-input", shift?.startLocal)}
         </div>
 
         <div class="field-row">
           <label>Окончание</label>
-          <input type="time" id="shift-end-input" value="${
-            shift?.endLocal || ""
-          }">
+          ${timePickerHtml("shift-end-input", shift?.endLocal)}
         </div>
 
         <div class="field-row">
@@ -4938,7 +4980,7 @@ function openShiftPopover(context, anchorEl) {
         <div class="shift-popover-note">
           ${isMobileLayout()
             ? "Кнопка «Сохранить» сразу отправляет смену в Pyrus."
-            : "Изменения сохраняются в Pyrus автоматически через пару секунд."}
+            : "Изменения видны сразу, в Pyrus сохраняются при закрытии окна."}
         </div>
       </div>
     </div>
@@ -5018,9 +5060,11 @@ function openShiftPopover(context, anchorEl) {
     const nameEl = shiftPopoverEl.querySelector("#shift-popover-shift-name");
     if (nameEl) nameEl.textContent = "Кастомная смена";
     positionShiftPopover(anchorEl);
-    const startInput = document.getElementById("shift-start-input");
-    // Для шаблонной смены подставленное время остаётся как основа для правки
-    startInput?.focus();
+    // Для шаблонной смены подставленное время остаётся как основа для правки;
+    // для пустой ячейки подставляем 09:00–18:00, чтобы квадратик появился сразу
+    if (!document.getElementById("shift-start-input")?.value) setTimePickerValue("shift-start-input", "09:00");
+    if (!document.getElementById("shift-end-input")?.value) setTimePickerValue("shift-end-input", "18:00");
+    if (!isMobileLayout()) commitPopover({ close: false, silent: true });
   });
 
   shiftPopoverEl
@@ -5038,12 +5082,8 @@ function openShiftPopover(context, anchorEl) {
         updateShiftPopoverName(line, id, tmpl.specialShortLabel);
 
         if (tmpl.timeRange) {
-          const startInput = document.getElementById("shift-start-input");
-          const endInput = document.getElementById("shift-end-input");
-          if (startInput && endInput) {
-	        startInput.value = normalizeTimeHHMM(tmpl.timeRange.start);
-	        endInput.value = normalizeTimeHHMM(tmpl.timeRange.end);
-          }
+          setTimePickerValue("shift-start-input", tmpl.timeRange.start);
+          setTimePickerValue("shift-end-input", tmpl.timeRange.end);
         }
 
         const amountInput = document.getElementById("shift-amount-input");
@@ -5078,6 +5118,7 @@ function openShiftPopover(context, anchorEl) {
 	      // чтобы не ловить RangeError на невалидном state.monthMeta.
 	      const conversion = convertLocalRangeToUtcWithMeta(year, monthIndex, day, start, end);
 	      if (!conversion) {
+	        if (silent) return false;
 	        alert("Некорректное время смены. Проверьте формат (например 08:00–20:00)." );
 	        return false;
 	      }
@@ -5116,9 +5157,36 @@ function openShiftPopover(context, anchorEl) {
 
   // На ПК кнопки в окне нет: правка применяется сразу, в Pyrus уходит автосохранением
   if (!isMobileLayout()) {
-    shiftPopoverEl
-      .querySelectorAll("#shift-start-input, #shift-end-input, #shift-amount-input, #shift-telephony-input")
-      .forEach((el) => el.addEventListener("change", () => commitPopover({ close: false, silent: true })));
+    autoSaveHeld = true;
+    const live = () => commitPopover({ close: false, silent: true });
+    shiftPopoverEl.querySelectorAll(".time-pick").forEach((box) => {
+      const hidden = box.querySelector("input[type=hidden]");
+      const h = box.querySelector(".time-pick-h");
+      const m = box.querySelector(".time-pick-m");
+      const sync = (e) => {
+        // выбрали часы — минуты по умолчанию 00
+        if (e?.target === h && h.value && !m.value) m.value = "00";
+        hidden.value = h.value && m.value ? `${h.value}:${m.value}` : "";
+        live();
+      };
+      h.addEventListener("change", sync);
+      m.addEventListener("change", sync);
+    });
+    const amountEl = shiftPopoverEl.querySelector("#shift-amount-input");
+    amountEl?.addEventListener("input", live);
+    shiftPopoverEl.querySelector("#shift-telephony-input")?.addEventListener("change", live);
+  } else {
+    shiftPopoverEl.querySelectorAll(".time-pick").forEach((box) => {
+      const hidden = box.querySelector("input[type=hidden]");
+      const h = box.querySelector(".time-pick-h");
+      const m = box.querySelector(".time-pick-m");
+      const sync = (e) => {
+        if (e?.target === h && h.value && !m.value) m.value = "00";
+        hidden.value = h.value && m.value ? `${h.value}:${m.value}` : "";
+      };
+      h.addEventListener("change", sync);
+      m.addEventListener("change", sync);
+    });
   }
 
   shiftPopoverKeydownHandler = (e) => {

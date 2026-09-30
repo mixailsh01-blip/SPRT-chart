@@ -4178,3 +4178,25 @@ body.swap-mode .app-toast {
 .profile-dropdown-item:hover {
   background: var(--bg-alt);
 }
+
+/* Выбор времени в кастомной смене */
+.time-pick { flex: 1; display: flex; align-items: center; gap: 6px; }
+.time-pick select {
+  flex: 1;
+  appearance: none;
+  -webkit-appearance: none;
+  text-align: center;
+  text-align-last: center;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  padding: 6px 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.time-pick select:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); }
+.time-pick-sep { color: var(--text-muted); font-weight: 600; }
