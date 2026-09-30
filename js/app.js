@@ -2987,6 +2987,22 @@ async function createVacationForRange(line, row, firstDay, lastDay, submitLine =
   const toLabel = formatDateRu(year, monthIndex, lastDay);
   if (!confirm(`Добавить отпуск в Pyrus?\n\n${row.employeeName}\nс ${fromLabel} по ${toLabel} (${count} дн.)`)) return;
 
+  // Показываем отпуск сразу, до ответа сервера; при ошибке — откатываем
+  const entry = {
+    taskId: null,
+    department: LINE_BY_KEY[submitLine]?.departmentName || LINE_LABELS[submitLine] || "",
+    startDay: firstDay,
+    endDayExclusive: lastDay + 1,
+    startLabel: fromLabel,
+    endLabel: toLabel,
+    year: String(year),
+    days: count,
+  };
+  const list = (state.vacationsByEmployee[row.employeeId] = state.vacationsByEmployee[row.employeeId] || []);
+  list.push(entry);
+  list.sort((x, y) => (x.startDay || 0) - (y.startDay || 0));
+  renderScheduleCurrentLine();
+
   try {
     const result = await apiClient.call("vacation.create", {
       employee_id: row.employeeId,
@@ -2995,26 +3011,15 @@ async function createVacationForRange(line, row, firstDay, lastDay, submitLine =
       line: submitLine,
     });
     vacationsService.applyCreated(result && result.task);
-
-    // Показываем сразу, локально — не ждём, пока реестр Pyrus догонит создание
-    // (это может занять время, а после перезагрузки страницы — и того дольше).
-    const entry = {
-      taskId: result?.task?.id ?? null,
-      department: LINE_BY_KEY[submitLine]?.departmentName || LINE_LABELS[submitLine] || "",
-      startDay: firstDay,
-      endDayExclusive: lastDay + 1,
-      startLabel: fromLabel,
-      endLabel: toLabel,
-      year: String(year),
-      days: count,
-    };
-    const list = (state.vacationsByEmployee[row.employeeId] = state.vacationsByEmployee[row.employeeId] || []);
-    list.push(entry);
-    list.sort((a, b) => (a.startDay || 0) - (b.startDay || 0));
+    entry.taskId = result?.task?.id ?? null;
     persistCachedScheduleForMonth(year, monthIndex);
     renderScheduleCurrentLine();
   } catch (err) {
     console.error("vacation.create error", err);
+    const cur = state.vacationsByEmployee[row.employeeId] || [];
+    const idx = cur.indexOf(entry);
+    if (idx >= 0) cur.splice(idx, 1);
+    renderScheduleCurrentLine();
     alert(`Не удалось добавить отпуск: ${err.message || err}`);
     return;
   }
