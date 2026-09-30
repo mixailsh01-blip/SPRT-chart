@@ -4214,3 +4214,13 @@ body.swap-mode .app-toast {
 .time-pick input[type="number"]::-webkit-inner-spin-button { opacity: 0; transition: opacity 0.15s ease; }
 .time-pick input[type="number"]:hover::-webkit-inner-spin-button,
 .time-pick input[type="number"]:focus::-webkit-inner-spin-button { opacity: 1; }
+
+/* Компактные поля времени */
+.time-pick { flex: 0 0 auto; gap: 4px; }
+.time-pick input[type="number"] {
+  flex: 0 0 auto;
+  width: 54px;
+  font-size: 13px;
+  padding: 3px 2px;
+  border-radius: 7px;
+}

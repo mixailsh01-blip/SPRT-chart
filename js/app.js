@@ -2822,8 +2822,9 @@ async function saveLineToPyrus(currentLine) {
     const monthKey = getMonthKey(year, monthIndex);
     scheduleService.invalidateMonthSchedule(monthKey);
     await reloadScheduleForCurrentMonth();
-    // Сохранённая смена могла начаться прямо сейчас — не ждать до минуты опроса
-    refreshLunchStatus();
+    // Сохранённая смена могла начаться прямо сейчас — не ждать до минуты опроса.
+    // Таблица смен на сервере обновляется с задержкой в несколько секунд, поэтому спрашиваем несколько раз
+    refreshLunchStatusSoon();
   } catch (err) {
     console.error("saveLineToPyrus error", err);
     throw err;
@@ -3448,6 +3449,21 @@ async function refreshLunchStatus() {
     } else {
       console.warn("lunch.status недоступен", err);
     }
+  }
+}
+
+let lunchBurstTimers = [];
+function refreshLunchStatusSoon() {
+  lunchBurstTimers.forEach(clearTimeout);
+  lunchBurstTimers = [];
+  refreshLunchStatus();
+  if (lunchUi.status?.onShift) return;
+  for (const ms of [4000, 9000, 16000, 28000]) {
+    lunchBurstTimers.push(
+      setTimeout(() => {
+        if (!lunchUi.status?.onShift) refreshLunchStatus();
+      }, ms)
+    );
   }
 }
 
@@ -4901,6 +4917,12 @@ function openShiftPopover(context, anchorEl) {
   const { year, monthIndex } = state.monthMeta;
   const date = new Date(year, monthIndex, day);
   const hasShift = Boolean(shift);
+  // Снимок на момент открытия: по «✕»/Esc правки окна откатываются
+  const cellKey = `${line}-${year}-${monthIndex + 1}-${employeeId}-${day}`;
+  const hadLocal = Object.prototype.hasOwnProperty.call(state.localChanges, cellKey);
+  const prevLocal = state.localChanges[cellKey];
+  const shiftSnap = shift ? deepClone(shift) : null;
+  let touched = false;
   let selectedTemplateId = shift?.templateId ?? null;
 
   const templates = state.shiftTemplatesByLine[line] || [];
@@ -4993,7 +5015,7 @@ function openShiftPopover(context, anchorEl) {
         hasShift ? "" : "disabled"
       }>Удалить</button>
       ${canStartSwap(line, employeeId, shift) ? '<button class="btn" type="button" id="shift-btn-swap" title="Поменяться сменой с другим сотрудником">🔁 Обмен</button>' : ""}
-      <button class="btn" type="button" id="shift-btn-cancel">${isMobileLayout() ? "Отмена" : "Закрыть"}</button>
+      <button class="btn" type="button" id="shift-btn-cancel">${isMobileLayout() ? "Отмена" : "Готово"}</button>
       ${isMobileLayout() ? '<button class="btn primary" type="button" id="shift-btn-save">Сохранить</button>' : ""}
     </div>
   `;
@@ -5016,9 +5038,25 @@ function openShiftPopover(context, anchorEl) {
     shiftPopoverEl.classList.add("open");
   });
 
+  const revertPopover = () => {
+    if (hadLocal) state.localChanges[cellKey] = prevLocal;
+    else delete state.localChanges[cellKey];
+    persistLocalChanges();
+    const sched = state.scheduleByLine[line];
+    const rowObj = sched?.rows?.find((r) => r.employeeId === employeeId);
+    const idx = sched?.days?.indexOf(day);
+    if (rowObj && idx >= 0) rowObj.shiftsByDay[idx] = shiftSnap ? deepClone(shiftSnap) : null;
+    applyLocalChangesToSchedule();
+    renderScheduleCurrentLine();
+  };
+  // ✕ и Esc отменяют правки, сделанные в этом окне; «Готово» и клик мимо окна — сохраняют
+  const cancelPopover = () => {
+    if (touched && !isMobileLayout()) revertPopover();
+    closeShiftPopover();
+  };
   shiftPopoverEl
     .querySelector(".shift-popover-close")
-    .addEventListener("click", closeShiftPopover);
+    .addEventListener("click", cancelPopover);
   shiftPopoverEl
     .querySelector("#shift-btn-cancel")
     .addEventListener("click", closeShiftPopover);
@@ -5137,6 +5175,7 @@ function openShiftPopover(context, anchorEl) {
 	        endUtcIso: conversion.endUtcIso,
 	        durationMinutes: conversion.durationMinutes,
       };
+      touched = true;
       persistLocalChanges();
 
       applyLocalChangesToSchedule();
@@ -5200,7 +5239,7 @@ function openShiftPopover(context, anchorEl) {
   }
 
   shiftPopoverKeydownHandler = (e) => {
-    if (e.key === "Escape") closeShiftPopover();
+    if (e.key === "Escape") cancelPopover();
   };
   document.addEventListener("keydown", shiftPopoverKeydownHandler);
 }
