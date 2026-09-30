@@ -2735,7 +2735,9 @@ function buildPyrusChangesPayload(lineToSave = null) {
           result.edit.task.push({
             task_id: baseShift.taskId,
             employee_id: row.employeeId,
-            item_id: currentShift.templateId ?? baseShift.templateId ?? null,
+            item_id: currentShift.templateId ?? null,
+            // Шаблонная смена стала кастомной — поле «Смена» в Pyrus нужно очистить
+            clear_template: baseShift.templateId != null && currentShift.templateId == null,
             start: conversion.startUtcIso,
             duration: conversion.durationMinutes,
             amount: Number(currentShift.amount || 0),
@@ -4852,11 +4854,20 @@ function openShiftPopover(context, anchorEl) {
   const hasShift = Boolean(shift);
   let selectedTemplateId = shift?.templateId ?? null;
 
+  const templates = state.shiftTemplatesByLine[line] || [];
+
+  // «Кастомная смена»: смена без шаблона или с временем, не совпадающим с шаблоном.
+  // Время и сумма показываются только для неё, для шаблонов они берутся из шаблона.
+  const shiftTemplate = templates.find((t) => t.id === shift?.templateId);
+  const matchesTemplate =
+    Boolean(shiftTemplate?.timeRange) &&
+    normalizeTimeHHMM(shiftTemplate.timeRange.start) === normalizeTimeHHMM(shift?.startLocal) &&
+    normalizeTimeHHMM(shiftTemplate.timeRange.end) === normalizeTimeHHMM(shift?.endLocal);
+  let isCustom = hasShift && !matchesTemplate;
+
   const dateLabel = `${String(day).padStart(2, "0")}.${String(
     monthIndex + 1
   ).padStart(2, "0")}.${year}`;
-
-  const templates = state.shiftTemplatesByLine[line] || [];
 
   shiftPopoverEl.innerHTML = `
     <div class="shift-popover-header">
@@ -4875,7 +4886,7 @@ function openShiftPopover(context, anchorEl) {
           ${templates
             .map(
               (t) => `
-            <button class="shift-template-pill" data-template-id="${t.id}">
+            <button class="shift-template-pill${!isCustom && t.id === shift?.templateId ? " active" : ""}" type="button" data-template-id="${t.id}">
               <div class="name">${t.name}</div>
               ${
                 t.timeRange
@@ -4886,11 +4897,15 @@ function openShiftPopover(context, anchorEl) {
           `
             )
             .join("")}
+          <button class="shift-template-pill shift-template-custom${isCustom ? " active" : ""}" type="button" data-custom="1">
+            <div class="name">Кастомная смена</div>
+            <div class="time">своё время и сумма</div>
+          </button>
         </div>
       </div>
 
-      <div class="shift-popover-section">
-        <div class="shift-popover-section-title">Ручное редактирование</div>
+      <div class="shift-popover-section shift-custom-section${isCustom ? "" : " hidden"}" id="shift-custom-section">
+        <div class="shift-popover-section-title">Кастомная смена</div>
 
         <div class="field-row">
           <label>Начало</label>
@@ -4912,7 +4927,9 @@ function openShiftPopover(context, anchorEl) {
             shift?.amount || ""
           }">
         </div>
+      </div>
 
+      <div class="shift-popover-section">
         <label class="telephony-toggle">
           <input type="checkbox" id="shift-telephony-input" ${shift?.telephony === false ? "" : "checked"}>
           <span>Включён в телефонию</span>
@@ -4944,6 +4961,10 @@ function openShiftPopover(context, anchorEl) {
     shift?.specialShortLabel,
     hasShift
   );
+  if (isCustom) {
+    const nameEl = shiftPopoverEl.querySelector("#shift-popover-shift-name");
+    if (nameEl) nameEl.textContent = "Кастомная смена";
+  }
   positionShiftPopover(anchorEl);
 
   requestAnimationFrame(() => {
@@ -4982,15 +5003,38 @@ function openShiftPopover(context, anchorEl) {
     });
   }
 
+  const customSectionEl = shiftPopoverEl.querySelector("#shift-custom-section");
+  const markActivePill = (activeBtn) => {
+    shiftPopoverEl
+      .querySelectorAll(".shift-template-pill")
+      .forEach((b) => b.classList.toggle("active", b === activeBtn));
+  };
+
+  shiftPopoverEl.querySelector(".shift-template-custom")?.addEventListener("click", (e) => {
+    isCustom = true;
+    selectedTemplateId = null;
+    markActivePill(e.currentTarget);
+    customSectionEl?.classList.remove("hidden");
+    const nameEl = shiftPopoverEl.querySelector("#shift-popover-shift-name");
+    if (nameEl) nameEl.textContent = "Кастомная смена";
+    positionShiftPopover(anchorEl);
+    const startInput = document.getElementById("shift-start-input");
+    // Для шаблонной смены подставленное время остаётся как основа для правки
+    startInput?.focus();
+  });
+
   shiftPopoverEl
-    .querySelectorAll(".shift-template-pill")
+    .querySelectorAll(".shift-template-pill[data-template-id]")
     .forEach((btn) => {
       btn.addEventListener("click", () => {
         const id = Number(btn.getAttribute("data-template-id"));
         const tmpl = templates.find((t) => t.id === id);
         if (!tmpl) return;
 
+        isCustom = false;
         selectedTemplateId = id;
+        markActivePill(btn);
+        customSectionEl?.classList.add("hidden");
         updateShiftPopoverName(line, id, tmpl.specialShortLabel);
 
         if (tmpl.timeRange) {
@@ -5024,8 +5068,11 @@ function openShiftPopover(context, anchorEl) {
       if (silent && (!start || !end)) return false;
 
       const key = `${line}-${year}-${monthIndex + 1}-${employeeId}-${day}`;
-      const templateId =
-        selectedTemplateId != null ? selectedTemplateId : shift?.templateId;
+      const templateId = isCustom
+        ? null
+        : selectedTemplateId != null
+          ? selectedTemplateId
+          : shift?.templateId;
       const specialShortLabel = resolveSpecialShortLabel(line, templateId);
 	      // В поповере всегда есть year/monthIndex выбранного месяца — используем их,
 	      // чтобы не ловить RangeError на невалидном state.monthMeta.
@@ -5039,6 +5086,7 @@ function openShiftPopover(context, anchorEl) {
         endLocal: end,
         amount,
         templateId,
+        custom: isCustom,
         specialShortLabel,
         telephony,
 	        startUtcIso: conversion.startUtcIso,
@@ -5124,7 +5172,9 @@ function applyLocalChangesToSchedule() {
           row.shiftsByDay[idx].startLocal = change.startLocal;
           row.shiftsByDay[idx].endLocal = change.endLocal;
           row.shiftsByDay[idx].amount = Number(change.amount || 0);
-          if (change.templateId != null) {
+          if (change.custom) {
+            row.shiftsByDay[idx].templateId = null;
+          } else if (change.templateId != null) {
             row.shiftsByDay[idx].templateId = change.templateId;
           }
           row.shiftsByDay[idx].specialShortLabel = specialShortLabel;

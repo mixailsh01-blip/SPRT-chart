@@ -2675,6 +2675,15 @@ body.dark-theme .clients-table-wrap::-webkit-scrollbar-thumb:hover {
   transform: translateY(0);
 }
 
+.shift-template-pill.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.shift-template-custom {
+  border-style: dashed;
+}
+
 .field-row {
   display: flex;
   align-items: center;
