@@ -13,6 +13,19 @@ function formatYmdCompact(year, monthIndex, day) {
 export function createProdCalendarService({ config }) {
   const prodCalConfig = config?.calendar?.prodCal || {};
 
+  // Синхронно: то, что уже лежит в localStorage (без учёта TTL), чтобы шапка
+  // сразу рисовалась с сокращёнными днями, не дожидаясь isdayoff.ru
+  function peekProdCalendarForMonth(year, monthIndex) {
+    try {
+      const raw = localStorage.getItem(prodCalCacheKey(prodCalConfig, year, monthIndex));
+      if (!raw) return null;
+      const cached = JSON.parse(raw);
+      return cached && cached.dayTypeByDay ? cached : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   async function getProdCalendarForMonth(year, monthIndex) {
     const cacheKey = prodCalCacheKey(prodCalConfig, year, monthIndex);
     const ttlMs = Number(prodCalConfig.ttlMs) || 0;
@@ -97,5 +110,5 @@ export function createProdCalendarService({ config }) {
     return payload;
   }
 
-  return { getProdCalendarForMonth };
+  return { getProdCalendarForMonth, peekProdCalendarForMonth };
 }

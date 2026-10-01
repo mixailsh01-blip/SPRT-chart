@@ -9,7 +9,7 @@ import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
 import { createVacationsService } from "./services/vacationsService.js?v=4";
 import { createScheduleService } from "./services/scheduleService.js?v=7";
-import { createProdCalendarService } from "./services/prodCalendarService.js?v=2";
+import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 
 
 /**
@@ -854,6 +854,10 @@ async function init() {
   loadCurrentLinePreference();
   loadEmployeeFilters();
   if (!loadCurrentMonthPreference()) initMonthMetaToToday();
+  // Прогрев производственного календаря до авторизации и загрузки графика
+  prodCalendarService
+    .getProdCalendarForMonth(state.monthMeta.year, state.monthMeta.monthIndex)
+    .catch(() => {});
   bindEmailAuth();
 
   const loggedInByMagicLink = await tryMagicLinkLogin();
@@ -4283,7 +4287,11 @@ function renderScheduleCurrentLine() {
   const monthKey = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
   const dayKindByDay = Object.create(null);
 
-  const prod = state.prodCalendar && state.prodCalendar.monthKey === monthKey ? state.prodCalendar : null;
+  let prod = state.prodCalendar && state.prodCalendar.monthKey === monthKey ? state.prodCalendar : null;
+  if (!prod) {
+    // Кэш календаря этого месяца (если уже загружали раньше) — показываем сразу
+    prod = prodCalendarService.peekProdCalendarForMonth(year, monthIndex);
+  }
 
   for (const day of days) {
     const date = new Date(year, monthIndex, day);
@@ -4303,7 +4311,15 @@ function renderScheduleCurrentLine() {
           : dayType === 0 || dayType === 4
             ? "workday"
             : dayType == null
-              ? (isFallbackHoliday ? "holiday" : isFallbackWeekend ? "weekend" : "workday")
+              ? (isFallbackHoliday
+                  ? "holiday"
+                  : isFallbackWeekend
+                    ? "weekend"
+                    : (FIXED_RU_HOLIDAYS[monthIndex + 1] || []).includes(day + 1) ||
+                        (day === new Date(year, monthIndex + 1, 0).getDate() &&
+                          (FIXED_RU_HOLIDAYS[((monthIndex + 1) % 12) + 1] || []).includes(1))
+                      ? "preholiday"
+                      : "workday")
               : null;
 
     const th1 = document.createElement("th");
