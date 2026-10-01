@@ -4360,3 +4360,13 @@ body.swap-mode .app-toast {
 .settings-danger {
   color: #e02b3d;
 }
+
+/* Табель отпусков */
+.vac-modal { width: min(860px, 100%); }
+.vac-host { margin-top: 10px; }
+.vac-report { width: 100%; border-collapse: collapse; font-size: 13px; }
+.vac-report th, .vac-report td { border: 1px solid var(--border, #e1e4ea); padding: 4px 8px; text-align: center; white-space: nowrap; }
+.vac-report th { font-weight: 700; }
+.vac-report th.vac-sub { font-weight: 500; }
+.vac-report .vac-name { text-align: left; vertical-align: top; font-weight: 600; white-space: normal; min-width: 150px; }
+.vac-report tr.vac-first td { border-top-width: 2px; }

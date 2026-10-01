@@ -37,7 +37,7 @@
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
   </script>
   <!-- Все модули грузятся параллельно, а не цепочкой импортов -->
-  <link rel="modulepreload" href="js/app.js?v=43" />
+  <link rel="modulepreload" href="js/app.js?v=44" />
   <link rel="modulepreload" href="js/config.js?v=9" />
   <link rel="modulepreload" href="js/api/apiClient.js?v=4" />
   <link rel="modulepreload" href="js/api/pyrusClient.js" />
@@ -45,7 +45,7 @@
   <link rel="modulepreload" href="js/cache/requestCache.js" />
   <link rel="modulepreload" href="js/services/membersService.js" />
   <link rel="modulepreload" href="js/services/catalogsService.js" />
-  <link rel="modulepreload" href="js/services/vacationsService.js?v=4" />
+  <link rel="modulepreload" href="js/services/vacationsService.js?v=5" />
   <link rel="modulepreload" href="js/services/scheduleService.js?v=7" />
   <link rel="modulepreload" href="js/services/prodCalendarService.js?v=2" />
 </head>
@@ -173,6 +173,9 @@
                 <button type="button" class="profile-dropdown-item" id="btn-lunch">🍽 Обед</button>
                 <span id="lunch-timer" class="lunch-timer hidden"></span>
               </div>
+              <button type="button" class="profile-dropdown-item hidden" id="btn-vacation-report">
+                🏖 Табель отпусков
+              </button>
               <button type="button" class="profile-dropdown-item hidden" id="btn-settings">
                 ⚙️ Настройки
               </button>
@@ -255,7 +258,7 @@
   </div>
 
   <script src="js/shift-colors.js?v=3"></script>
-  <script type="module" src="js/app.js?v=43"></script>
+  <script type="module" src="js/app.js?v=44"></script>
 </body>
 
 </html>

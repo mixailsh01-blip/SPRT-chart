@@ -243,5 +243,65 @@ export function createVacationsService({
     return entry && entry.value ? entry.value : null;
   }
 
-  return { getVacationsForMonth, peekVacationsForMonth, applyCreated, applyDeleted };
+  // Все отпуска, пересекающиеся с годом (для табеля): [{ empId, name, startMs, endMs }]
+  // startMs/endMs — первый и последний день отпуска включительно (UTC-полночь «локальной» даты).
+  async function getVacationsForYear(year, { force } = {}) {
+    const raw = await cached(
+      "pyrus:vacations:register",
+      { ttlMs: 90_000, force },
+      () => pyrusClient.pyrusRequest(`/v4/forms/${formId}/register`, { method: "GET" })
+    );
+    const data = unwrapPyrusData(raw);
+    const wrapper = Array.isArray(data) ? data[0] : data;
+    const tasks = withRecentWrites((wrapper && wrapper.tasks) || []);
+    const offsetMs = Number(timezoneOffsetMin || 0) * 60 * 1000;
+    const yearStart = Date.UTC(year, 0, 1);
+    const yearEnd = Date.UTC(year + 1, 0, 1);
+    const out = [];
+    for (const task of tasks) {
+      const fields = task.fields || [];
+      const personField = fields.find((f) => f && f.id === fieldIds?.person && f.type === "person");
+      const periodField = fields.find(
+        (f) => f && f.id === fieldIds?.period && (f.type === "due_date_time" || f.type === "due_date")
+      );
+      const daysField = fieldIds?.days != null ? fields.find((f) => f && f.id === fieldIds.days) : null;
+      if (!personField || !periodField || !personField.value?.id || !periodField.value) continue;
+      const startIso = periodField.value;
+      const periodDurationMin = Number(periodField.duration || 0);
+      const daysCount = daysField && Number(daysField.value) > 0 ? Number(daysField.value) : 0;
+      const dateOnly = String(startIso).match(/^(\d{4})-(\d{2})-(\d{2})(T00:00:00(?:\.000)?Z)?$/);
+      let startMs;
+      let endExclMs;
+      if (dateOnly && (daysCount > 0 || dateOnly[4])) {
+        const [yy, mm, dd] = dateOnly.slice(1, 4).map(Number);
+        startMs = Date.UTC(yy, mm - 1, dd);
+        const len = daysCount > 0 ? daysCount : Math.floor(periodDurationMin / 1440) + 1;
+        endExclMs = startMs + len * DAY_MS;
+      } else if (dateOnly) {
+        if (!periodDurationMin) continue;
+        const [yy, mm, dd] = dateOnly.slice(1, 4).map(Number);
+        startMs = Date.UTC(yy, mm - 1, dd);
+        endExclMs = startMs + periodDurationMin * 60 * 1000;
+      } else {
+        const utc = new Date(startIso).getTime();
+        const dur = periodDurationMin || (daysCount ? daysCount * 1440 : 0);
+        if (Number.isNaN(utc) || !dur) continue;
+        startMs = utc + offsetMs;
+        endExclMs = startMs + dur * 60 * 1000;
+      }
+      const d = new Date(endExclMs);
+      const midnight = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0;
+      let endMs = midnight ? endExclMs - DAY_MS : endExclMs;
+      endMs = Date.UTC(new Date(endMs).getUTCFullYear(), new Date(endMs).getUTCMonth(), new Date(endMs).getUTCDate());
+      startMs = Date.UTC(new Date(startMs).getUTCFullYear(), new Date(startMs).getUTCMonth(), new Date(startMs).getUTCDate());
+      if (endMs < startMs) endMs = startMs;
+      if (endMs < yearStart || startMs >= yearEnd) continue;
+      const pv = personField.value;
+      const name = [pv.last_name, pv.first_name].filter(Boolean).join(" ").trim() || String(pv.id);
+      out.push({ taskId: task.id ?? null, empId: pv.id, name, startMs, endMs });
+    }
+    return out;
+  }
+
+  return { getVacationsForMonth, getVacationsForYear, peekVacationsForMonth, applyCreated, applyDeleted };
 }

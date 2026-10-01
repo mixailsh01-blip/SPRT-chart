@@ -7,10 +7,11 @@ import { createApiClient } from "./api/apiClient.js?v=4";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
-import { createVacationsService } from "./services/vacationsService.js?v=4";
+import { createVacationsService } from "./services/vacationsService.js?v=5";
 import { createScheduleService } from "./services/scheduleService.js?v=7";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=5";
+import { createVacationReport } from "./vacationReport.js?v=1";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
@@ -153,6 +154,13 @@ const settingsPanel = createSettingsPanel({
   },
   showToast: (msg) => showAppToast(msg),
 });
+
+const vacationReport = createVacationReport({
+  vacationsService,
+  getEmployees: () => state.employeesByLine.ALL || [],
+  showToast: (msg) => showAppToast(msg),
+});
+const VACATION_REPORT_ROLES = (config.auth?.permissions?.vacationReportRoles || []).map(String);
 
 const EDIT_ALL_ROLES = (config.auth?.permissions?.editAll || []).map(String);
 const ADMIN_ROLES = (config.auth?.permissions?.adminRoles || []).map(String);
@@ -432,6 +440,14 @@ function isAdminUser() {
 // Кнопка «Настройки»: админам и редакторам графика (право edit хотя бы на одну вкладку)
 function canOpenSettings() {
   return isAdminUser() || LINE_KEYS.some((key) => state.auth.permissions[key] === "edit");
+}
+
+// Табель отпусков: админы и роль «менеджер по персоналу»
+function canOpenVacationReport() {
+  if (isAdminUser()) return true;
+  const roles = Array.isArray(state.auth.roles) ? state.auth.roles : [];
+  const ids = roles.map((role) => String(role?.id ?? role).trim());
+  return VACATION_REPORT_ROLES.some((r) => ids.includes(r));
 }
 
 function isOwnEmployeeId(employeeId) {
@@ -2235,7 +2251,10 @@ function setLegendOpen(isOpen) {
 
 function setProfileDropdownOpen(open) {
   if (!profileDropdownEl) return;
-  if (open) $("#btn-settings")?.classList.toggle("hidden", !canOpenSettings());
+  if (open) {
+    $("#btn-settings")?.classList.toggle("hidden", !canOpenSettings());
+    $("#btn-vacation-report")?.classList.toggle("hidden", !canOpenVacationReport());
+  }
   profileDropdownEl.classList.toggle("hidden", !open);
   profileDropdownBackdropEl?.classList.toggle("hidden", !open);
   btnProfileEl?.setAttribute("aria-expanded", open ? "true" : "false");
@@ -2256,6 +2275,10 @@ function bindTopBarButtons() {
   profileDropdownEl?.addEventListener("click", (e) => {
     if (e.target.closest("#btn-theme-toggle") || e.target.closest("#btn-logout")) {
       setProfileDropdownOpen(false);
+    }
+    if (e.target.closest("#btn-vacation-report")) {
+      setProfileDropdownOpen(false);
+      vacationReport.open();
     }
     if (e.target.closest("#btn-settings")) {
       setProfileDropdownOpen(false);
