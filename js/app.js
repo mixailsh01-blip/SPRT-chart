@@ -11,7 +11,7 @@ import { createVacationsService } from "./services/vacationsService.js?v=6";
 import { createScheduleService } from "./services/scheduleService.js?v=7";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=5";
-import { createVacationReport } from "./vacationReport.js?v=3";
+import { createVacationReport } from "./vacationReport.js?v=4";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
@@ -159,6 +159,8 @@ const vacationReport = createVacationReport({
   vacationsService,
   apiClient,
   canApprove: () => canOpenVacationReport(),
+  // Отдел сотрудника (вкладка ТП/ПО) — для поля «Отдел» в задаче; у остальных поле остаётся пустым
+  getEmployeeLine: (empId) => LINE_KEYS.find((k) => (state.employeesByLine[k] || []).some((e) => Number(e.id) === Number(empId))) || null,
   getEmployees: () => state.employeesByLine.ALL || [],
   showToast: (msg) => showAppToast(msg),
 });

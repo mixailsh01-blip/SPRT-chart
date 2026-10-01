@@ -4375,3 +4375,9 @@ body.swap-mode .app-toast {
 .vac-report td.vac-wait { background: rgba(212, 160, 23, 0.16); color: #b8860b; }
 .vac-report td.vac-click { cursor: pointer; }
 .vac-report td.vac-click:hover { filter: brightness(1.15); outline: 1px solid var(--accent, #1cdbe5); }
+.vac-add { flex-wrap: wrap; margin-top: 8px; }
+.vac-add select, .vac-add input { min-width: 140px; }
+.vac-report td.vac-status { position: relative; padding-right: 26px; }
+.vac-report .vac-del { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); opacity: 0.35; cursor: pointer; font-size: 12px; }
+.vac-report td.vac-status:hover .vac-del { opacity: 0.9; }
+.vac-report .vac-del:hover { color: #e5484d; }

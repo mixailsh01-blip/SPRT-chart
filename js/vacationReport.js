@@ -18,7 +18,7 @@ function fmtDay(ms) {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 
-export function createVacationReport({ vacationsService, apiClient, getEmployees, canApprove = () => false, showToast = () => {} }) {
+export function createVacationReport({ vacationsService, apiClient, getEmployees, getEmployeeLine = () => null, canApprove = () => false, showToast = () => {} }) {
   let backdrop = null;
   let keyHandler = null;
   let year = new Date().getFullYear();
@@ -81,33 +81,92 @@ export function createVacationReport({ vacationsService, apiClient, getEmployees
   function statusCell(h) {
     const td = el("td", "vac-status");
     if (!h) return td;
+    const label = el("span", "vac-label");
+    td.appendChild(label);
+    const manage = canApprove() && h.id != null;
     const paint = () => {
-      td.className = `vac-status ${h.ok ? "vac-ok" : "vac-wait"}`;
-      td.textContent = h.ok ? "✓ Согласован" : "Ожидает";
+      td.className = `vac-status ${h.ok ? "vac-ok" : "vac-wait"}${manage ? " vac-click" : ""}`;
+      label.textContent = h.ok ? "✓ Согласован" : "Ожидает";
+      if (manage) td.title = h.ok ? "Снять согласование" : "Согласовать отпуск";
     };
     paint();
-    if (canApprove() && h.id != null) {
-      td.classList.add("vac-click");
-      td.title = h.ok ? "Снять согласование" : "Согласовать отпуск";
-      td.addEventListener("click", () => {
-        // Сразу меняем статус на экране, запрос уходит в фоне; при ошибке откатываем
-        const prev = h.ok;
-        const next = !prev;
-        const apply = (v) => {
-          h.ok = v;
-          overrides.set(h.id, v);
-          paint();
-          td.classList.add("vac-click");
-          td.title = v ? "Снять согласование" : "Согласовать отпуск";
-        };
-        apply(next);
-        apiClient.call("vacation.approve", { task_id: h.id, approved: next }).catch((err) => {
-          apply(prev);
-          showToast(`Не удалось: ${err.message || err}`);
-        });
+    if (!manage) return td;
+
+    td.addEventListener("click", () => {
+      // Сразу меняем статус на экране, запрос уходит в фоне; при ошибке откатываем
+      const prev = h.ok;
+      const next = !prev;
+      const apply = (v) => { h.ok = v; overrides.set(h.id, v); paint(); };
+      apply(next);
+      apiClient.call("vacation.approve", { task_id: h.id, approved: next }).catch((err) => {
+        apply(prev);
+        showToast(`Не удалось: ${err.message || err}`);
       });
-    }
+    });
+
+    const del = el("span", "vac-del", "✕");
+    del.title = "Удалить отпуск";
+    del.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Удалить отпуск ${fmtDay(h.s)} — ${fmtDay(h.e)} из Pyrus?`)) return;
+      try {
+        await apiClient.call("vacation.delete", { task_id: h.id });
+        vacationsService.applyDeleted(h.id);
+        overrides.delete(h.id);
+        cache.delete(year);
+        render();
+      } catch (err) {
+        showToast(`Не удалось удалить: ${err.message || err}`);
+      }
+    });
+    td.appendChild(del);
     return td;
+  }
+
+  // Форма «Добавить отпуск» (только для тех, кто может согласовывать)
+  function buildAddBar() {
+    const bar = el("div", "settings-row vac-add");
+    const sel = el("select", "settings-input");
+    sel.appendChild(Object.assign(el("option", null, "Сотрудник…"), { value: "" }));
+    for (const e of [...(getEmployees() || [])].sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "ru"))) {
+      sel.appendChild(Object.assign(el("option", null, e.fullName || e.name), { value: String(e.id) }));
+    }
+    const from = el("input", "settings-input");
+    from.type = "date";
+    const to = el("input", "settings-input");
+    to.type = "date";
+    const btn = el("button", "btn primary", "＋ Добавить отпуск");
+    btn.type = "button";
+    from.addEventListener("change", () => { if (!to.value || to.value < from.value) to.value = from.value; });
+    btn.addEventListener("click", async () => {
+      if (!sel.value || !from.value || !to.value) return showToast("Выберите сотрудника и даты отпуска");
+      const days = Math.round((Date.parse(`${to.value}T00:00:00Z`) - Date.parse(`${from.value}T00:00:00Z`)) / 86400000) + 1;
+      if (!(days >= 1)) return showToast("Дата конца раньше даты начала");
+      if (days > 90) return showToast("Отпуск не может быть длиннее 90 дней");
+      btn.disabled = true;
+      btn.textContent = "Добавляю…";
+      try {
+        const res = await apiClient.call("vacation.create", {
+          employee_id: Number(sel.value),
+          start_date: from.value,
+          days,
+          line: getEmployeeLine(Number(sel.value)),
+        });
+        vacationsService.applyCreated(res && res.task);
+        showToast("Отпуск добавлен");
+        from.value = "";
+        to.value = "";
+        cache.delete(year);
+        render();
+      } catch (err) {
+        showToast(`Не удалось добавить: ${err.message || err}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "＋ Добавить отпуск";
+      }
+    });
+    bar.append(sel, el("span", "settings-label", "с"), from, el("span", "settings-label", "по"), to, btn);
+    return bar;
   }
 
   function drawTable(host, list) {
@@ -235,7 +294,9 @@ export function createVacationReport({ vacationsService, apiClient, getEmployees
     bar.append(prev, yearLabel, next, onlyLbl, refresh, copy);
 
     const host = el("div", "vac-host settings-body");
-    modal.append(head, bar, host);
+    modal.append(head, bar);
+    if (canApprove()) modal.appendChild(buildAddBar());
+    modal.appendChild(host);
     backdrop.appendChild(modal);
     backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) close(); });
     document.body.appendChild(backdrop);
