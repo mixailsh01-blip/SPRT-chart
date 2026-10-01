@@ -62,6 +62,10 @@ export function createSettingsPanel({
   let activeTab = "shifts";
   let keyHandler = null;
 
+  // Номер последней отрисовки: устаревшие (медленные) ответы не затирают текущую вкладку
+  let renderSeq = 0;
+  const setBody = (seq, ...nodes) => { if (seq === renderSeq) body.replaceChildren(...nodes); };
+
   async function loadTemplates(force = false) {
     // По умолчанию — из кэша, который уже загружен при старте приложения (быстро и без запроса к серверу)
     const raw = await catalogsService.getShiftsCatalog({ catalogId, force });
@@ -94,8 +98,9 @@ export function createSettingsPanel({
 
   // ---------- Вкладка «Шаблоны смен» ----------
   async function renderShiftsTab(force = false) {
+    const mySeq = ++renderSeq;
     const ctx = getContext();
-    body.replaceChildren(el("div", "settings-muted", "Загрузка…"));
+    setBody(mySeq, el("div", "settings-muted", "Загрузка…"));
     let templates;
     try {
       templates = await loadTemplates(force);
@@ -106,7 +111,7 @@ export function createSettingsPanel({
       retry.type = "button";
       retry.addEventListener("click", () => renderShiftsTab(true));
       box.appendChild(retry);
-      body.replaceChildren(box);
+      setBody(mySeq, box);
       return;
     }
 
@@ -250,17 +255,18 @@ export function createSettingsPanel({
       }
     });
     wrap.appendChild(form);
-    body.replaceChildren(wrap);
+    setBody(mySeq, wrap);
   }
 
   // ---------- Вкладка «Доступ» (только админ) ----------
   async function renderAccessTab(force = false) {
+    const mySeq = ++renderSeq;
     const ctx = getContext();
     if (!ctx.isAdmin) {
-      body.replaceChildren(el("div", "settings-error", "Доступно только администратору"));
+      setBody(mySeq, el("div", "settings-error", "Доступно только администратору"));
       return;
     }
-    body.replaceChildren(el("div", "settings-muted", "Загрузка…"));
+    setBody(mySeq, el("div", "settings-muted", "Загрузка…"));
     let roles;
     let members;
     try {
@@ -278,7 +284,7 @@ export function createSettingsPanel({
       retry.type = "button";
       retry.addEventListener("click", () => renderAccessTab(true));
       box.appendChild(retry);
-      body.replaceChildren(box);
+      setBody(mySeq, box);
       return;
     }
     const users = members
@@ -369,7 +375,7 @@ export function createSettingsPanel({
       setRole(user.id, roleSel.value, true);
     });
     wrap.appendChild(form);
-    body.replaceChildren(wrap);
+    setBody(mySeq, wrap);
   }
 
   // ---------- Каркас окна ----------
