@@ -68,16 +68,6 @@ export function createVacationReport({ vacationsService, apiClient, getEmployees
     return list;
   }
 
-  function toTsv(list) {
-    const lines = [["Сотрудник", "1 пол. начало", "1 пол. конец", "1 пол. статус", "2 пол. начало", "2 пол. конец", "2 пол. статус"].join("\t")];
-    for (const p of list) {
-      p.rows.forEach((r, i) =>
-        lines.push([i === 0 ? p.name : "", r.h1 ? fmtDay(r.h1.s) : "", r.h1 ? fmtDay(r.h1.e) : "", r.h1 ? (r.h1.ok ? "согласован" : "не согласован") : "", r.h2 ? fmtDay(r.h2.s) : "", r.h2 ? fmtDay(r.h2.e) : "", r.h2 ? (r.h2.ok ? "согласован" : "не согласован") : ""].join("\t"))
-      );
-    }
-    return lines.join("\n");
-  }
-
   function statusCell(h) {
     const td = el("td", "vac-status");
     if (!h) return td;
@@ -131,16 +121,41 @@ export function createVacationReport({ vacationsService, apiClient, getEmployees
     for (const e of [...(getEmployees() || [])].sort((a, b) => String(a.fullName).localeCompare(String(b.fullName), "ru"))) {
       sel.appendChild(Object.assign(el("option", null, e.fullName || e.name), { value: String(e.id) }));
     }
-    const from = el("input", "settings-input");
-    from.type = "date";
-    const to = el("input", "settings-input");
-    to.type = "date";
+    // Обычный текст вместо type="date": в Safari дата не считается введённой, пока не заполнены день, месяц и год.
+    // Принимаем «30.10.2026», «30.10» (год — выбранный в табеле) и «30» (месяц — текущий).
+    const mkDate = (ph) => {
+      const i = el("input", "settings-input");
+      i.type = "text";
+      i.placeholder = ph;
+      i.inputMode = "numeric";
+      i.maxLength = 10;
+      i.style.maxWidth = "130px";
+      return i;
+    };
+    const from = mkDate("дд.мм.гггг");
+    const to = mkDate("дд.мм.гггг");
+    const parseDate = (txt) => {
+      const m = String(txt || "").trim().match(/^(\d{1,2})(?:[./\-\s](\d{1,2}))?(?:[./\-\s](\d{2}|\d{4}))?$/);
+      if (!m) return null;
+      const d = Number(m[1]);
+      const mo = m[2] ? Number(m[2]) : new Date().getMonth() + 1;
+      let y = m[3] ? Number(m[3]) : year;
+      if (y < 100) y += 2000;
+      const ms = Date.UTC(y, mo - 1, d);
+      const dt = new Date(ms);
+      if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+      return ms;
+    };
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
     const btn = el("button", "btn primary", "＋ Добавить отпуск");
     btn.type = "button";
-    from.addEventListener("change", () => { if (!to.value || to.value < from.value) to.value = from.value; });
     btn.addEventListener("click", async () => {
-      if (!sel.value || !from.value || !to.value) return showToast("Выберите сотрудника и даты отпуска");
-      const days = Math.round((Date.parse(`${to.value}T00:00:00Z`) - Date.parse(`${from.value}T00:00:00Z`)) / 86400000) + 1;
+      if (!sel.value) return showToast("Выберите сотрудника");
+      const a = parseDate(from.value);
+      if (a == null) return showToast("Введите дату начала, например 30.10.2026");
+      const b = to.value.trim() ? parseDate(to.value) : a;
+      if (b == null) return showToast("Введите дату конца, например 06.11.2026");
+      const days = Math.round((b - a) / 86400000) + 1;
       if (!(days >= 1)) return showToast("Дата конца раньше даты начала");
       if (days > 90) return showToast("Отпуск не может быть длиннее 90 дней");
       btn.disabled = true;
@@ -148,7 +163,7 @@ export function createVacationReport({ vacationsService, apiClient, getEmployees
       try {
         const res = await apiClient.call("vacation.create", {
           employee_id: Number(sel.value),
-          start_date: from.value,
+          start_date: iso(a),
           days,
           line: getEmployeeLine(Number(sel.value)),
         });
@@ -289,19 +304,7 @@ export function createVacationReport({ vacationsService, apiClient, getEmployees
     const refresh = el("button", "btn toggle", "↻ Обновить");
     refresh.type = "button";
     refresh.addEventListener("click", () => render(true));
-    const copy = el("button", "btn primary", "Копировать");
-    copy.type = "button";
-    copy.title = "Скопировать таблицу (вставляется в Excel / Google Таблицы)";
-    copy.style.marginLeft = "auto";
-    copy.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(toTsv(backdrop._list || []));
-        showToast("Табель скопирован");
-      } catch (_) {
-        showToast("Не удалось скопировать");
-      }
-    });
-    bar.append(prev, yearLabel, next, onlyLbl, refresh, copy);
+    bar.append(prev, yearLabel, next, onlyLbl, refresh);
 
     const host = el("div", "vac-host settings-body");
     modal.append(head, bar);
