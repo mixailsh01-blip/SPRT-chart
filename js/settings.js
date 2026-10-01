@@ -127,6 +127,10 @@ export function createSettingsPanel({
     refreshBtn.title = "Загрузить свежий список из Pyrus";
     refreshBtn.addEventListener("click", () => renderShiftsTab(true));
     filterRow.appendChild(refreshBtn);
+    const addToggle = el("button", "btn primary", "＋ Добавить смену");
+    addToggle.type = "button";
+    addToggle.style.marginLeft = "auto";
+    filterRow.appendChild(addToggle);
     wrap.appendChild(filterRow);
 
     const list = el("div", "settings-list");
@@ -174,8 +178,8 @@ export function createSettingsPanel({
     renderList();
 
     // Форма добавления
-    const form = el("form", "settings-form");
-    form.appendChild(el("div", "settings-subtitle", "Новый шаблон"));
+    const form = el("form", "settings-form hidden");
+    form.appendChild(el("div", "settings-subtitle", "Новая смена"));
     const nameIn = el("input", "settings-input");
     nameIn.placeholder = "Название, например «Утро»";
     nameIn.maxLength = 60;
@@ -203,9 +207,25 @@ export function createSettingsPanel({
     });
     const timeRow = el("div", "settings-row");
     timeRow.append(fromIn, el("span", "settings-muted", "—"), toIn);
-    const submit = el("button", "btn primary", "Добавить шаблон");
+    const submit = el("button", "btn primary", "Сохранить смену");
     submit.type = "submit";
-    form.append(nameIn, timeRow, amountIn, deptSel, submit);
+    const cancel = el("button", "btn toggle", "Отмена");
+    cancel.type = "button";
+    const btnRow = el("div", "settings-row");
+    btnRow.append(submit, cancel);
+    form.append(nameIn, timeRow, amountIn, deptSel, btnRow);
+    // Форма скрыта, пока не нажата «＋ Добавить смену»
+    const setFormOpen = (open) => {
+      form.classList.toggle("hidden", !open);
+      addToggle.classList.toggle("hidden", open);
+      if (open) nameIn.focus();
+    };
+    addToggle.addEventListener("click", () => setFormOpen(true));
+    cancel.addEventListener("click", () => {
+      form.reset();
+      amountIn.value = "0";
+      setFormOpen(false);
+    });
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const name = nameIn.value.trim();
@@ -396,6 +416,12 @@ export function createSettingsPanel({
     tabShifts.dataset.tab = "shifts";
     tabShifts.addEventListener("click", () => showTab("shifts"));
     tabs.appendChild(tabShifts);
+    if (!ctx.isAdmin) {
+      const note = el("span", "settings-muted", "Выдача ролей — только у администраторов");
+      note.style.marginLeft = "auto";
+      note.style.alignSelf = "center";
+      tabs.appendChild(note);
+    }
     if (ctx.isAdmin) {
       const tabAccess = el("button", "settings-tab", "Доступ");
       tabAccess.type = "button";
