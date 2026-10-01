@@ -89,21 +89,22 @@ export function createVacationReport({ vacationsService, apiClient, getEmployees
     if (canApprove() && h.id != null) {
       td.classList.add("vac-click");
       td.title = h.ok ? "Снять согласование" : "Согласовать отпуск";
-      td.addEventListener("click", async () => {
-        if (td.dataset.busy) return;
-        td.dataset.busy = "1";
-        const next = !h.ok;
-        try {
-          await apiClient.call("vacation.approve", { task_id: h.id, approved: next });
-          h.ok = next;
-          overrides.set(h.id, next);
+      td.addEventListener("click", () => {
+        // Сразу меняем статус на экране, запрос уходит в фоне; при ошибке откатываем
+        const prev = h.ok;
+        const next = !prev;
+        const apply = (v) => {
+          h.ok = v;
+          overrides.set(h.id, v);
           paint();
           td.classList.add("vac-click");
-        } catch (err) {
+          td.title = v ? "Снять согласование" : "Согласовать отпуск";
+        };
+        apply(next);
+        apiClient.call("vacation.approve", { task_id: h.id, approved: next }).catch((err) => {
+          apply(prev);
           showToast(`Не удалось: ${err.message || err}`);
-        } finally {
-          delete td.dataset.busy;
-        }
+        });
       });
     }
     return td;
@@ -154,22 +155,41 @@ export function createVacationReport({ vacationsService, apiClient, getEmployees
     host.replaceChildren(table);
   }
 
+  const cache = new Map(); // year -> vacations: показываем сразу, пока грузится свежее
+
+  async function fetchYear(y, force) {
+    const data = await vacationsService.getVacationsForYear(y, { force });
+    cache.set(y, data);
+    return data;
+  }
+
+  function paint(host, vacations) {
+    const list = buildRows(vacations.map((v) => ({ ...v })));
+    if (backdrop) backdrop._list = list;
+    drawTable(host, list);
+  }
+
   async function render(force = false) {
     const my = ++seq;
     const host = backdrop.querySelector(".vac-host");
-    host.replaceChildren(el("div", "settings-muted", "Загрузка…"));
+    const cached = cache.get(year);
+    if (cached) paint(host, cached);
+    else host.replaceChildren(el("div", "settings-muted", "Загрузка…"));
     let vacations;
     try {
-      vacations = await vacationsService.getVacationsForYear(year, { force });
+      vacations = await fetchYear(year, force);
     } catch (err) {
-      if (my !== seq) return;
+      if (my !== seq || cached) return;
       host.replaceChildren(el("div", "settings-error", `Не удалось загрузить отпуска: ${err.message || err}`));
       return;
     }
     if (my !== seq || !backdrop) return;
-    const list = buildRows(vacations.map((v) => ({ ...v })));
-    backdrop._list = list;
-    drawTable(host, list);
+    paint(host, vacations);
+  }
+
+  // Прогрев: вызывается при открытии меню профиля, к клику по кнопке данные уже загружены
+  function prefetch() {
+    fetchYear(year, false).catch(() => {});
   }
 
   function open() {
@@ -224,5 +244,5 @@ export function createVacationReport({ vacationsService, apiClient, getEmployees
     render();
   }
 
-  return { open, close };
+  return { open, close, prefetch };
 }

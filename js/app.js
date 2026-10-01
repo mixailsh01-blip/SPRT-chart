@@ -11,7 +11,7 @@ import { createVacationsService } from "./services/vacationsService.js?v=6";
 import { createScheduleService } from "./services/scheduleService.js?v=7";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=5";
-import { createVacationReport } from "./vacationReport.js?v=2";
+import { createVacationReport } from "./vacationReport.js?v=3";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
@@ -2255,7 +2255,9 @@ function setProfileDropdownOpen(open) {
   if (!profileDropdownEl) return;
   if (open) {
     $("#btn-settings")?.classList.toggle("hidden", !canOpenSettings());
-    $("#btn-vacation-report")?.classList.toggle("hidden", !canOpenVacationReport());
+    const canVacReport = canOpenVacationReport();
+    $("#btn-vacation-report")?.classList.toggle("hidden", !canVacReport);
+    if (canVacReport) vacationReport.prefetch();
   }
   profileDropdownEl.classList.toggle("hidden", !open);
   profileDropdownBackdropEl?.classList.toggle("hidden", !open);
