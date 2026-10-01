@@ -10,6 +10,8 @@ import { createCatalogsService } from "./services/catalogsService.js";
 import { createVacationsService } from "./services/vacationsService.js?v=4";
 import { createScheduleService } from "./services/scheduleService.js?v=7";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
+import { createSettingsPanel } from "./settings.js?v=1";
+import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
 /**
@@ -130,8 +132,31 @@ const scheduleService = createScheduleService({
   formId: PYRUS_FORM_IDS.schedule,
 });
 const prodCalendarService = createProdCalendarService({ config });
+const settingsPanel = createSettingsPanel({
+  apiClient,
+  pyrusClient,
+  membersService,
+  catalogsService,
+  catalogId: PYRUS_CATALOG_IDS.shifts,
+  catalogColumns: PYRUS_CATALOG_COLUMNS.shifts || {},
+  getContext: () => ({
+    isAdmin: isAdminUser(),
+    ownId: state.auth.user?.id ?? null,
+    adminRoleId: Number(ADMIN_ROLES[0]) || null,
+    editorRoleId: Number(SCHEDULE_EDITOR_ROLE) || null,
+  }),
+  onTemplatesChanged: async () => {
+    invalidateCacheKey(`pyrus:catalogs:shifts:${PYRUS_CATALOG_IDS.shifts}`);
+    await loadShiftsCatalog();
+    renderQuickTemplateOptions();
+    renderScheduleCurrentLine();
+  },
+  showToast: (msg) => showAppToast(msg),
+});
 
 const EDIT_ALL_ROLES = (config.auth?.permissions?.editAll || []).map(String);
+const ADMIN_ROLES = (config.auth?.permissions?.adminRoles || []).map(String);
+const SCHEDULE_EDITOR_ROLE = config.auth?.permissions?.scheduleEditorRole ?? null;
 
 function buildDefaultPermissions() {
   const permissions = {};
@@ -395,6 +420,18 @@ function getOwnEditableLineKey() {
   if (state.auth.user?.id == null) return null;
   const editable = LINE_KEYS.filter((key) => canEditLine(key));
   return editable.length === 1 ? editable[0] : null;
+}
+
+// Полный админ (роль из config.auth.permissions.adminRoles)
+function isAdminUser() {
+  const roles = Array.isArray(state.auth.roles) ? state.auth.roles : [];
+  const ids = roles.map((role) => String(role?.id ?? role).trim());
+  return ADMIN_ROLES.some((r) => ids.includes(r));
+}
+
+// Кнопка «Настройки»: админам и редакторам графика (право edit хотя бы на одну вкладку)
+function canOpenSettings() {
+  return isAdminUser() || LINE_KEYS.some((key) => state.auth.permissions[key] === "edit");
 }
 
 function isOwnEmployeeId(employeeId) {
@@ -2182,6 +2219,7 @@ function setLegendOpen(isOpen) {
 
 function setProfileDropdownOpen(open) {
   if (!profileDropdownEl) return;
+  if (open) $("#btn-settings")?.classList.toggle("hidden", !canOpenSettings());
   profileDropdownEl.classList.toggle("hidden", !open);
   profileDropdownBackdropEl?.classList.toggle("hidden", !open);
   btnProfileEl?.setAttribute("aria-expanded", open ? "true" : "false");
@@ -2202,6 +2240,10 @@ function bindTopBarButtons() {
   profileDropdownEl?.addEventListener("click", (e) => {
     if (e.target.closest("#btn-theme-toggle") || e.target.closest("#btn-logout")) {
       setProfileDropdownOpen(false);
+    }
+    if (e.target.closest("#btn-settings")) {
+      setProfileDropdownOpen(false);
+      settingsPanel.open();
     }
   });
   setLegendOpen(window.innerWidth <= 768 ? false : readLegendPref());

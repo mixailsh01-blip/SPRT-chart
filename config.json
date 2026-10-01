@@ -13,7 +13,13 @@
     "codeLength": 6,
     "resendTimerSec": 60,
     "permissions": {
-      "editAll": [],
+      "editAll": [
+        1331784
+      ],
+      "adminRoles": [
+        1331784
+      ],
+      "scheduleEditorRole": 1329637,
       "viewDefault": "all"
     },
     "texts": {
