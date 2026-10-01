@@ -145,7 +145,17 @@ function normalizePermissions(rawPermissions) {
   const permissions = buildDefaultPermissions();
   if (!rawPermissions || typeof rawPermissions !== "object") return permissions;
   for (const key of LINE_PERMISSION_KEYS) {
-    permissions[key] = rawPermissions[key] === "edit" ? "edit" : "view";
+    const v = rawPermissions[key];
+    permissions[key] = v === "edit" ? "edit" : v === "self" ? "self" : "view";
+  }
+  return permissions;
+}
+
+// Если бэкенд вернул «view», а по ролям человек — участник отдела, даём «self» (своя строка)
+function upgradeViewToSelf(permissions, roles) {
+  const byRoles = resolvePermissionsFromRoles(roles);
+  for (const line of LINES) {
+    if (permissions[line.key] === "view" && byRoles[line.key] === "self") permissions[line.key] = "self";
   }
   return permissions;
 }
@@ -163,6 +173,8 @@ function resolvePermissionsFromRoles(roles) {
 
   for (const line of LINES) {
     if (editAll || hasAny(line.editRoles)) permissions[line.key] = "edit";
+    // Обычный сотрудник отдела (роль участника) — правит только свою строку
+    else if (hasAny((line.memberRoles || []).map(String))) permissions[line.key] = "self";
   }
   // "ВСЕ" — сводная вкладка только для просмотра: у каждой смены должно быть подразделение
   permissions.ALL = "view";
@@ -352,14 +364,26 @@ function applyAuthState({ user, permissions, login, name, id, roles } = {}) {
 // Проверка прав доступа
 // -----------------------------
 
+// Вкладка доступна для правок: полностью ("edit") или только в своей строке ("self")
 function canEditLine(line) {
   const permission = state.auth.permissions[line] || state.auth.permissions.ALL;
-  return permission === "edit";
+  return permission === "edit" || permission === "self";
+}
+
+function isSelfOnlyLine(line) {
+  return (state.auth.permissions[line] || state.auth.permissions.ALL) === "self";
+}
+
+// Можно ли править конкретную строку (сотрудника) во вкладке
+function canEditRow(line, employeeId) {
+  const permission = state.auth.permissions[line] || state.auth.permissions.ALL;
+  if (permission === "edit") return true;
+  return permission === "self" && isOwnEmployeeId(employeeId);
 }
 
 function canViewLine(line) {
   const permission = state.auth.permissions[line] || state.auth.permissions.ALL;
-  return permission === "view" || permission === "edit";
+  return permission === "view" || permission === "edit" || permission === "self";
 }
 
 // Свой отдел (ТП или ПО) — вкладка, где у пользователя есть право редактировать.
@@ -369,7 +393,7 @@ function canViewLine(line) {
 // (во втором случае непонятно, какой отдел указывать, и это редкий случай руководителя).
 function getOwnEditableLineKey() {
   if (state.auth.user?.id == null) return null;
-  const editable = LINE_KEYS.filter((key) => state.auth.permissions[key] === "edit");
+  const editable = LINE_KEYS.filter((key) => canEditLine(key));
   return editable.length === 1 ? editable[0] : null;
 }
 
@@ -1249,7 +1273,7 @@ function applyAuthResult(result) {
   };
   // Приоритет: права, посчитанные бэкендом; иначе — по ролям из config.lines
   state.auth.permissions = result?.permissions
-    ? normalizePermissions(result.permissions)
+    ? upgradeViewToSelf(normalizePermissions(result.permissions), state.auth.roles)
     : resolvePermissionsFromRoles(state.auth.roles);
   updateCurrentUserLabel(state.auth.user.name || state.auth.user.login);
   saveAuthCache(state.auth.user.login);
@@ -2685,6 +2709,8 @@ function buildPyrusChangesPayload(lineToSave = null) {
     }
 
     currentSched.rows.forEach((row) => {
+      // Обычный сотрудник отправляет только свою строку
+      if (!canEditRow(line, row.employeeId)) return;
       const baseRow = baseRowByEmployee[row.employeeId];
 
       // Подразделение смены = вкладка, в которой её редактируют
@@ -2905,7 +2931,7 @@ function formatDateRu(year, monthIndex, day) {
 function canDeleteVacation(line, vac, employeeId) {
   if (!vac || vac.taskId == null) return false;
   const targetLine = line === "ALL" ? (isOwnEmployeeId(employeeId) ? getOwnEditableLineKey() : null) : line;
-  if (!targetLine || (line !== "ALL" && !canEditLine(targetLine))) return false;
+  if (!targetLine || (line !== "ALL" && !canEditRow(targetLine, employeeId))) return false;
   const deptName = String(LINE_BY_KEY[targetLine]?.departmentName || LINE_LABELS[targetLine] || "").trim().toUpperCase();
   return String(vac.department || "").trim().toUpperCase() === deptName;
 }
@@ -3075,7 +3101,7 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
     return;
   }
 
-  if (!canEditLine(line)) {
+  if (!canEditRow(line, row.employeeId)) {
     openShiftPopoverReadOnly(
       {
         line,
