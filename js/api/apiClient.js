@@ -18,6 +18,7 @@ export const API_ACTIONS = Object.freeze({
   SCHEDULE_SAVE: "schedule.save",
   VACATION_CREATE: "vacation.create",
   VACATION_DELETE: "vacation.delete",
+  VACATION_APPROVE: "vacation.approve",
   SCHEDULE_SWAP: "schedule.swap",
   SETTINGS_SHIFT_SAVE: "settings.shift.save",
   SETTINGS_SHIFT_DELETE: "settings.shift.delete",

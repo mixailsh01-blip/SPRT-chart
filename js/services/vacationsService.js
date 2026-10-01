@@ -243,7 +243,7 @@ export function createVacationsService({
     return entry && entry.value ? entry.value : null;
   }
 
-  // Все отпуска, пересекающиеся с годом (для табеля): [{ empId, name, startMs, endMs }]
+  // Все отпуска, пересекающиеся с годом (для табеля): [{ taskId, empId, name, startMs, endMs, approved }]
   // startMs/endMs — первый и последний день отпуска включительно (UTC-полночь «локальной» даты).
   async function getVacationsForYear(year, { force } = {}) {
     const raw = await cached(
@@ -298,7 +298,9 @@ export function createVacationsService({
       if (endMs < yearStart || startMs >= yearEnd) continue;
       const pv = personField.value;
       const name = [pv.last_name, pv.first_name].filter(Boolean).join(" ").trim() || String(pv.id);
-      out.push({ taskId: task.id ?? null, empId: pv.id, name, startMs, endMs });
+      const apprField = fieldIds?.approved != null ? fields.find((f) => f && f.id === fieldIds.approved) : null;
+      const approved = apprField ? apprField.value === "checked" || apprField.value === true : false;
+      out.push({ taskId: task.id ?? null, empId: pv.id, name, startMs, endMs, approved });
     }
     return out;
   }

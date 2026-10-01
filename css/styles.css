@@ -4370,3 +4370,8 @@ body.swap-mode .app-toast {
 .vac-report th.vac-sub { font-weight: 500; }
 .vac-report .vac-name { text-align: left; vertical-align: top; font-weight: 600; white-space: normal; min-width: 150px; }
 .vac-report tr.vac-first td { border-top-width: 2px; }
+.vac-modal { width: min(1000px, 100%); }
+.vac-report td.vac-ok { background: rgba(46, 160, 67, 0.18); color: #2ea043; font-weight: 600; }
+.vac-report td.vac-wait { background: rgba(212, 160, 23, 0.16); color: #b8860b; }
+.vac-report td.vac-click { cursor: pointer; }
+.vac-report td.vac-click:hover { filter: brightness(1.15); outline: 1px solid var(--accent, #1cdbe5); }

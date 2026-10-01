@@ -80,7 +80,8 @@
         "year": 2,
         "person": 3,
         "department": 4,
-        "days": 5
+        "days": 5,
+        "approved": 7
       }
     }
   },

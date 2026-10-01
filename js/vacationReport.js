@@ -1,6 +1,7 @@
 // Табель отпусков (кнопка в меню аватарки): «Планы на отпуск <год>» по полугодиям.
 // Данные — существующие отпуска из формы Pyrus «График отпусков» (те же, что в графике).
 // Отпуск относится к полугодию по дате начала. У сотрудника несколько периодов — несколько строк.
+// Согласование (✓ «Согласован» / «Ожидает») — флажок в Pyrus; менять может тот, у кого canApprove().
 // Доступ (кнопка и окно): админы и роль «менеджер по персоналу» (см. canOpen в app.js).
 
 const MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
@@ -17,12 +18,13 @@ function fmtDay(ms) {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 
-export function createVacationReport({ vacationsService, getEmployees, showToast = () => {} }) {
+export function createVacationReport({ vacationsService, apiClient, getEmployees, canApprove = () => false, showToast = () => {} }) {
   let backdrop = null;
   let keyHandler = null;
   let year = new Date().getFullYear();
   let onlyWithVacations = false;
   let seq = 0;
+  const overrides = new Map(); // taskId -> approved: показываем сразу, пока реестр Pyrus не догнал
 
   function close() {
     backdrop?.remove();
@@ -50,7 +52,8 @@ export function createVacationReport({ vacationsService, getEmployees, showToast
       } else if (startsIn.getUTCFullYear() > year) {
         continue;
       }
-      (new Date(v.startMs).getUTCMonth() < 6 ? p.h1 : p.h2).push({ s: v.startMs, e: v.endMs });
+      const approved = overrides.has(v.taskId) ? overrides.get(v.taskId) : v.approved;
+      (new Date(v.startMs).getUTCMonth() < 6 ? p.h1 : p.h2).push({ s: v.startMs, e: v.endMs, id: v.taskId, ok: approved });
     }
     const list = [];
     for (const p of people.values()) {
@@ -66,13 +69,44 @@ export function createVacationReport({ vacationsService, getEmployees, showToast
   }
 
   function toTsv(list) {
-    const lines = [["Сотрудник", "1 пол. начало", "1 пол. конец", "2 пол. начало", "2 пол. конец"].join("\t")];
+    const lines = [["Сотрудник", "1 пол. начало", "1 пол. конец", "1 пол. статус", "2 пол. начало", "2 пол. конец", "2 пол. статус"].join("\t")];
     for (const p of list) {
       p.rows.forEach((r, i) =>
-        lines.push([i === 0 ? p.name : "", r.h1 ? fmtDay(r.h1.s) : "", r.h1 ? fmtDay(r.h1.e) : "", r.h2 ? fmtDay(r.h2.s) : "", r.h2 ? fmtDay(r.h2.e) : ""].join("\t"))
+        lines.push([i === 0 ? p.name : "", r.h1 ? fmtDay(r.h1.s) : "", r.h1 ? fmtDay(r.h1.e) : "", r.h1 ? (r.h1.ok ? "согласован" : "не согласован") : "", r.h2 ? fmtDay(r.h2.s) : "", r.h2 ? fmtDay(r.h2.e) : "", r.h2 ? (r.h2.ok ? "согласован" : "не согласован") : ""].join("\t"))
       );
     }
     return lines.join("\n");
+  }
+
+  function statusCell(h) {
+    const td = el("td", "vac-status");
+    if (!h) return td;
+    const paint = () => {
+      td.className = `vac-status ${h.ok ? "vac-ok" : "vac-wait"}`;
+      td.textContent = h.ok ? "✓ Согласован" : "Ожидает";
+    };
+    paint();
+    if (canApprove() && h.id != null) {
+      td.classList.add("vac-click");
+      td.title = h.ok ? "Снять согласование" : "Согласовать отпуск";
+      td.addEventListener("click", async () => {
+        if (td.dataset.busy) return;
+        td.dataset.busy = "1";
+        const next = !h.ok;
+        try {
+          await apiClient.call("vacation.approve", { task_id: h.id, approved: next });
+          h.ok = next;
+          overrides.set(h.id, next);
+          paint();
+          td.classList.add("vac-click");
+        } catch (err) {
+          showToast(`Не удалось: ${err.message || err}`);
+        } finally {
+          delete td.dataset.busy;
+        }
+      });
+    }
+    return td;
   }
 
   function drawTable(host, list) {
@@ -83,18 +117,19 @@ export function createVacationReport({ vacationsService, getEmployees, showToast
     th0.rowSpan = 3;
     r1.appendChild(th0);
     const title = el("th", "vac-title", `Планы на отпуск ${year}`);
-    title.colSpan = 4;
+    title.colSpan = 6;
     r1.appendChild(title);
     const r2 = el("tr");
     for (const t of ["1 полугодие", "2 полугодие"]) {
       const th = el("th", "vac-half", t);
-      th.colSpan = 2;
+      th.colSpan = 3;
       r2.appendChild(th);
     }
     const r3 = el("tr");
     for (let i = 0; i < 2; i++) {
       r3.appendChild(el("th", "vac-sub", "Дата начала"));
       r3.appendChild(el("th", "vac-sub", "Дата конца"));
+      r3.appendChild(el("th", "vac-sub", "Согласование"));
     }
     thead.append(r1, r2, r3);
     table.appendChild(thead);
@@ -107,10 +142,11 @@ export function createVacationReport({ vacationsService, getEmployees, showToast
           td.rowSpan = p.rows.length;
           tr.appendChild(td);
         }
-        tr.appendChild(el("td", null, r.h1 ? fmtDay(r.h1.s) : ""));
-        tr.appendChild(el("td", null, r.h1 ? fmtDay(r.h1.e) : ""));
-        tr.appendChild(el("td", null, r.h2 ? fmtDay(r.h2.s) : ""));
-        tr.appendChild(el("td", null, r.h2 ? fmtDay(r.h2.e) : ""));
+        for (const h of [r.h1, r.h2]) {
+          tr.appendChild(el("td", null, h ? fmtDay(h.s) : ""));
+          tr.appendChild(el("td", null, h ? fmtDay(h.e) : ""));
+          tr.appendChild(statusCell(h));
+        }
         tbody.appendChild(tr);
       });
     }

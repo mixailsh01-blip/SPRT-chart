@@ -3,15 +3,15 @@
 // Чистый vanilla JS.
 
 import { config, getConfigValue } from "./config.js?v=9";
-import { createApiClient } from "./api/apiClient.js?v=4";
+import { createApiClient } from "./api/apiClient.js?v=5";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
-import { createVacationsService } from "./services/vacationsService.js?v=5";
+import { createVacationsService } from "./services/vacationsService.js?v=6";
 import { createScheduleService } from "./services/scheduleService.js?v=7";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=5";
-import { createVacationReport } from "./vacationReport.js?v=1";
+import { createVacationReport } from "./vacationReport.js?v=2";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
@@ -157,6 +157,8 @@ const settingsPanel = createSettingsPanel({
 
 const vacationReport = createVacationReport({
   vacationsService,
+  apiClient,
+  canApprove: () => canOpenVacationReport(),
   getEmployees: () => state.employeesByLine.ALL || [],
   showToast: (msg) => showAppToast(msg),
 });
