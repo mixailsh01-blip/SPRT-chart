@@ -259,6 +259,20 @@ export function createSettingsPanel({
   }
 
   // ---------- Вкладка «Доступ» (только админ) ----------
+  let accessCache = null; // последние загруженные роли и сотрудники — показываем сразу, обновляем в фоне
+
+  async function fetchAccess(force) {
+    const [rolesRaw, membersRaw] = await Promise.all([
+      pyrusClient.pyrusRequest("/v4/roles", { method: "GET" }),
+      membersService.getMembers({ force }),
+    ]);
+    const rd = unwrapPyrusData(rolesRaw);
+    return {
+      roles: (Array.isArray(rd) ? rd[0] : rd)?.roles || [],
+      members: membersService.extractMembersFromPyrusData(membersRaw) || [],
+    };
+  }
+
   async function renderAccessTab(force = false) {
     const mySeq = ++renderSeq;
     const ctx = getContext();
@@ -266,17 +280,21 @@ export function createSettingsPanel({
       setBody(mySeq, el("div", "settings-error", "Доступно только администратору"));
       return;
     }
+    if (accessCache && !force) {
+      // Мгновенно из памяти, свежие данные подтягиваем в фоне и перерисовываем, только если что-то изменилось
+      drawAccess(mySeq, ctx, accessCache.roles, accessCache.members);
+      fetchAccess(false)
+        .then((fresh) => {
+          const changed = JSON.stringify(fresh) !== JSON.stringify(accessCache);
+          accessCache = fresh;
+          if (changed && mySeq === renderSeq) drawAccess(mySeq, ctx, fresh.roles, fresh.members);
+        })
+        .catch(() => {});
+      return;
+    }
     setBody(mySeq, el("div", "settings-muted", "Загрузка…"));
-    let roles;
-    let members;
     try {
-      const [rolesRaw, membersRaw] = await Promise.all([
-        pyrusClient.pyrusRequest("/v4/roles", { method: "GET" }),
-        membersService.getMembers({ force }),
-      ]);
-      const rd = unwrapPyrusData(rolesRaw);
-      roles = (Array.isArray(rd) ? rd[0] : rd)?.roles || [];
-      members = membersService.extractMembersFromPyrusData(membersRaw) || [];
+      accessCache = await fetchAccess(force);
     } catch (err) {
       const box = el("div", "settings-section");
       box.appendChild(el("div", "settings-error", `Не удалось загрузить роли: ${err.message || err}`));
@@ -287,6 +305,10 @@ export function createSettingsPanel({
       setBody(mySeq, box);
       return;
     }
+    drawAccess(mySeq, ctx, accessCache.roles, accessCache.members);
+  }
+
+  function drawAccess(mySeq, ctx, roles, members) {
     const users = members
       .filter((m) => !m.banned && (!m.type || m.type === "user"))
       .map((m) => ({ id: Number(m.id), name: `${m.last_name || ""} ${m.first_name || ""}`.trim() || m.email || `#${m.id}` }))
@@ -306,7 +328,7 @@ export function createSettingsPanel({
       try {
         await apiClient.call("settings.role.set", { member_id: memberId, role: roleKey, grant });
         showToast(grant ? "Роль выдана" : "Роль снята");
-        await renderAccessTab();
+        await renderAccessTab(true);
       } catch (err) {
         alert(`Не удалось изменить роль: ${err.message || err}`);
       }
@@ -441,6 +463,8 @@ export function createSettingsPanel({
     backdrop.appendChild(modal);
     document.body.appendChild(backdrop);
     document.body.classList.add("settings-open");
+    // Роли и сотрудники подгружаем заранее — вкладка «Доступ» откроется мгновенно
+    if (getContext().isAdmin && !accessCache) fetchAccess(false).then((d) => { accessCache = d; }).catch(() => {});
     keyHandler = (e) => {
       if (e.key === "Escape") close();
     };
