@@ -233,13 +233,23 @@ export function createVacationReport({ vacationsService, apiClient, getEmployees
     const host = backdrop.querySelector(".vac-host");
     const cached = cache.get(year);
     if (cached) paint(host, cached);
-    else host.replaceChildren(el("div", "settings-muted", "Загрузка…"));
+    else host.replaceChildren(el("div", "settings-muted", "Загрузка… (если сервер занят, может занять до 30 секунд)"));
     let vacations;
     try {
-      vacations = await fetchYear(year, force);
+      // Не висим бесконечно: через 45 секунд показываем ошибку с кнопкой «Повторить»
+      vacations = await Promise.race([
+        fetchYear(year, force),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("сервер долго не отвечает")), 45000)),
+      ]);
     } catch (err) {
       if (my !== seq || cached) return;
-      host.replaceChildren(el("div", "settings-error", `Не удалось загрузить отпуска: ${err.message || err}`));
+      const box = el("div", "settings-section");
+      box.appendChild(el("div", "settings-error", `Не удалось загрузить отпуска: ${err.message || err}`));
+      const retry = el("button", "btn primary", "Повторить");
+      retry.type = "button";
+      retry.addEventListener("click", () => render(true));
+      box.appendChild(retry);
+      host.replaceChildren(box);
       return;
     }
     if (my !== seq || !backdrop) return;
