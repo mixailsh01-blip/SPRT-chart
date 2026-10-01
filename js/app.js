@@ -3,7 +3,7 @@
 // Чистый vanilla JS.
 
 import { config, getConfigValue } from "./config.js?v=9";
-import { createApiClient } from "./api/apiClient.js?v=3";
+import { createApiClient } from "./api/apiClient.js?v=4";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
@@ -1530,25 +1530,41 @@ async function verifyLogin(identifier, code) {
   return result;
 }
 
-// Вход по ссылке из письма с кодом: ?li_email=...&li_code=... — сразу auth.verify без ручного ввода.
+// Вход по ссылке: ?li=<одноразовый токен> (почта и код в адресе не светятся).
+// Старый формат ?li_email=...&li_code=... тоже поддерживается.
 async function tryMagicLinkLogin() {
   const params = new URLSearchParams(window.location.search);
+  const linkToken = params.get("li");
   const email = params.get("li_email");
   const code = params.get("li_code");
-  if (!email || !code) return false;
+  if (!linkToken && (!email || !code)) return false;
   const url = new URL(window.location.href);
-  url.searchParams.delete("li_email");
-  url.searchParams.delete("li_code");
+  ["li", "li_email", "li_code"].forEach((k) => url.searchParams.delete(k));
   window.history.replaceState({}, "", url.toString());
   try {
+    if (linkToken) {
+      const result = await apiClient.call("auth.link", { token: linkToken });
+      if (!result?.sessionToken) {
+        throw Object.assign(new Error("Сервер не вернул сессию. Повторите вход."), { code: "NO_SESSION" });
+      }
+      applyAuthResult(result);
+      clearResendTimer();
+      showMainScreen();
+      renderLineTabs();
+      updateLineToggleUI();
+      persistCurrentLinePreference();
+      loadInitialData();
+      return true;
+    }
     emailAuthState.targetEmail = normalizeIdentifier(email) || email;
     await verifyLogin(emailAuthState.targetEmail, code);
     return true;
   } catch (err) {
-    if (emailInputEl) emailInputEl.value = email;
+    if (email && emailInputEl) emailInputEl.value = email;
     const messages = {
       INVALID_CODE: "Ссылка устарела — введите код вручную",
-      CODE_EXPIRED: "Код истёк — запросите новый",
+      CODE_EXPIRED: "Ссылка устарела — запросите новый код",
+      INVALID_LINK: "Ссылка устарела или уже использована — запросите код",
       LOCKED: "Слишком много попыток. Попробуйте позже",
     };
     if (emailRequestErrorEl) emailRequestErrorEl.textContent = messages[err?.code] || "Не удалось войти по ссылке — введите код вручную";

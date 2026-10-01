@@ -11,6 +11,7 @@ import { createLogger } from "../utils/logger.js";
 export const API_ACTIONS = Object.freeze({
   AUTH_START: "auth.start",
   AUTH_VERIFY: "auth.verify",
+  AUTH_LINK: "auth.link",
   AUTH_ME: "auth.me",
   AUTH_LOGOUT: "auth.logout",
   PYRUS_REQUEST: "pyrus.request",
@@ -26,7 +27,7 @@ export const API_ACTIONS = Object.freeze({
   LUNCH_END: "lunch.end",
 });
 
-const PUBLIC_ACTIONS = new Set([API_ACTIONS.AUTH_START, API_ACTIONS.AUTH_VERIFY]);
+const PUBLIC_ACTIONS = new Set([API_ACTIONS.AUTH_START, API_ACTIONS.AUTH_VERIFY, API_ACTIONS.AUTH_LINK]);
 
 export function createApiClient({ baseUrl, timeoutMs = 30000, getToken, onUnauthorized, fetchFn = fetch, logger } = {}) {
   if (!baseUrl) throw new Error("apiClient: не задан api.baseUrl в config.json");
