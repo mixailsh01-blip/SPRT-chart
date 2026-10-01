@@ -10,7 +10,7 @@ import { createCatalogsService } from "./services/catalogsService.js";
 import { createVacationsService } from "./services/vacationsService.js?v=4";
 import { createScheduleService } from "./services/scheduleService.js?v=7";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
-import { createSettingsPanel } from "./settings.js?v=1";
+import { createSettingsPanel } from "./settings.js?v=2";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 

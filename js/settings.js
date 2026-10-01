@@ -62,8 +62,9 @@ export function createSettingsPanel({
   let activeTab = "shifts";
   let keyHandler = null;
 
-  async function loadTemplates() {
-    const raw = await catalogsService.getShiftsCatalog({ catalogId, force: true });
+  async function loadTemplates(force = false) {
+    // По умолчанию — из кэша, который уже загружен при старте приложения (быстро и без запроса к серверу)
+    const raw = await catalogsService.getShiftsCatalog({ catalogId, force });
     const data = unwrapPyrusData(raw);
     const catalog = Array.isArray(data) ? data[0] : data;
     const headers = catalog?.catalog_headers || [];
@@ -92,14 +93,20 @@ export function createSettingsPanel({
   }
 
   // ---------- Вкладка «Шаблоны смен» ----------
-  async function renderShiftsTab() {
+  async function renderShiftsTab(force = false) {
     const ctx = getContext();
     body.replaceChildren(el("div", "settings-muted", "Загрузка…"));
     let templates;
     try {
-      templates = await loadTemplates();
+      templates = await loadTemplates(force);
     } catch (err) {
-      body.replaceChildren(el("div", "settings-error", `Не удалось загрузить смены: ${err.message || err}`));
+      const box = el("div", "settings-section");
+      box.appendChild(el("div", "settings-error", `Не удалось загрузить смены: ${err.message || err}`));
+      const retry = el("button", "btn primary", "Повторить");
+      retry.type = "button";
+      retry.addEventListener("click", () => renderShiftsTab(true));
+      box.appendChild(retry);
+      body.replaceChildren(box);
       return;
     }
 
@@ -115,6 +122,11 @@ export function createSettingsPanel({
       filterSel.appendChild(o);
     });
     filterRow.appendChild(filterSel);
+    const refreshBtn = el("button", "btn toggle", "↻ Обновить");
+    refreshBtn.type = "button";
+    refreshBtn.title = "Загрузить свежий список из Pyrus";
+    refreshBtn.addEventListener("click", () => renderShiftsTab(true));
+    filterRow.appendChild(refreshBtn);
     wrap.appendChild(filterRow);
 
     const list = el("div", "settings-list");
@@ -222,7 +234,7 @@ export function createSettingsPanel({
   }
 
   // ---------- Вкладка «Доступ» (только админ) ----------
-  async function renderAccessTab() {
+  async function renderAccessTab(force = false) {
     const ctx = getContext();
     if (!ctx.isAdmin) {
       body.replaceChildren(el("div", "settings-error", "Доступно только администратору"));
@@ -234,13 +246,19 @@ export function createSettingsPanel({
     try {
       const [rolesRaw, membersRaw] = await Promise.all([
         pyrusClient.pyrusRequest("/v4/roles", { method: "GET" }),
-        membersService.getMembers({ force: true }),
+        membersService.getMembers({ force }),
       ]);
       const rd = unwrapPyrusData(rolesRaw);
       roles = (Array.isArray(rd) ? rd[0] : rd)?.roles || [];
       members = membersService.extractMembersFromPyrusData(membersRaw) || [];
     } catch (err) {
-      body.replaceChildren(el("div", "settings-error", `Не удалось загрузить роли: ${err.message || err}`));
+      const box = el("div", "settings-section");
+      box.appendChild(el("div", "settings-error", `Не удалось загрузить роли: ${err.message || err}`));
+      const retry = el("button", "btn primary", "Повторить");
+      retry.type = "button";
+      retry.addEventListener("click", () => renderAccessTab(true));
+      box.appendChild(retry);
+      body.replaceChildren(box);
       return;
     }
     const users = members
