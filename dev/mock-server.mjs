@@ -287,6 +287,19 @@ async function handleApi(req, res) {
     console.log("vacation.delete", payload.task_id);
     return ok(res, { deletedId: payload.task_id });
   }
+  if (action === "lunch.status") return ok(res, { onShift: false, shiftEnd: null, lunch: null, lunchMinutes: 60, budgetRemainingSec: 3600, canStart: false });
+  if (action === "lunch.list") {
+    const t = Date.now();
+    const iso = (ms) => new Date(ms).toISOString();
+    return ok(res, {
+      items: [
+        { member_id: 2, name: "Смирнова Анна", dept: "ТП", status: "returned", start_utc: iso(t - 3 * 3600e3), end_utc: iso(t - 2 * 3600e3), ended_at: iso(t - 2.5 * 3600e3), overdue: false },
+        { member_id: 1, name: "Петров Иван", dept: "ТП", status: "active", start_utc: iso(t - 20 * 60e3), end_utc: iso(t + 40 * 60e3), ended_at: null, overdue: false },
+        { member_id: 3, name: "Кузнецов Олег", dept: "ПО", status: "scheduled", start_utc: iso(t + 60 * 60e3), end_utc: iso(t + 120 * 60e3), ended_at: null, overdue: false },
+      ],
+      serverTime: iso(t),
+    });
+  }
   return fail(res, 400, "UNKNOWN_ACTION", `Неизвестный action: ${action}`);
 }
 

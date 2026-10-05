@@ -842,6 +842,8 @@ const changeLogListEl = $("#change-log-list");
 const lunchWidgetEl = $("#lunch-widget");
 const btnLunchEl = $("#btn-lunch");
 const lunchTimerEl = $("#lunch-timer");
+const btnLunchBoardEl = $("#btn-lunch-board");
+const lunchBoardCountEl = $("#lunch-board-count");
 const btnClearHistoryEl = $("#btn-clear-history");
 let appToastTimer = null;
 
@@ -3608,8 +3610,12 @@ function handleLunchVisibility() {
 
 function startLunchWidget() {
   refreshLunchStatus();
+  refreshLunchBoard();
   if (!lunchUi.poll) {
-    lunchUi.poll = setInterval(refreshLunchStatus, LUNCH_POLL_MS);
+    lunchUi.poll = setInterval(() => {
+      refreshLunchStatus();
+      refreshLunchBoard();
+    }, LUNCH_POLL_MS);
     document.addEventListener("visibilitychange", handleLunchVisibility);
   }
 }
@@ -3622,7 +3628,10 @@ function stopLunchWidget() {
   lunchUi.tick = null;
   lunchUi.refreshAfterEnd = null;
   lunchUi.status = null;
+  lunchBoard.items = [];
   closeLunchPopover();
+  renderLunchBoardButton();
+  applyLunchBadges();
   renderLunchWidget();
   document.removeEventListener("visibilitychange", handleLunchVisibility);
 }
@@ -3633,6 +3642,7 @@ async function startLunch(startAtIso) {
   renderLunchWidget();
   try {
     const status = await apiClient.call("lunch.start", startAtIso ? { start_at: startAtIso } : {});
+    setTimeout(refreshLunchBoard, 500);
     applyLunchStatus(status);
     showAppToast(
       status?.lunch?.status === "scheduled"
@@ -3655,6 +3665,7 @@ async function endOrCancelLunch() {
   renderLunchWidget();
   try {
     const result = await apiClient.call("lunch.end", {});
+    setTimeout(refreshLunchBoard, 500);
     applyLunchStatus(result);
     if (status === "scheduled") {
       showAppToast("Обед отменён");
@@ -3670,6 +3681,158 @@ async function endOrCancelLunch() {
     renderLunchWidget();
   }
 }
+
+// -----------------------------
+// Обеды всех сотрудников за сегодня (lunch.list) — видны каждому
+// -----------------------------
+// Кнопка «🍽 Обеды» в шапке: счётчик тех, кто сейчас на обеде, по клику — список на сегодня
+// (сейчас на обеде / запланированы / уже были). У имени сотрудника в графике — значок 🍽, пока он на обеде.
+
+const lunchBoard = { items: [], fetchedAt: 0, unsupported: false, open: false };
+
+function lunchItemIsActive(item, nowMs = Date.now()) {
+  if (item.status !== "active") return false;
+  return new Date(item.start_utc).getTime() <= nowMs;
+}
+
+function activeLunchByEmployee() {
+  const map = new Map();
+  for (const it of lunchBoard.items) if (lunchItemIsActive(it)) map.set(Number(it.member_id), it);
+  return map;
+}
+
+function lunchBadgeTitle(item) {
+  const until = isoToLocalHHMM(item.end_utc);
+  return `На обеде с ${isoToLocalHHMM(item.start_utc)}${until ? ` до ${until}` : ""}`;
+}
+
+function decorateLunchBadge(tdName, employeeId, activeMap = null) {
+  if (!tdName) return;
+  const map = activeMap || activeLunchByEmployee();
+  const item = map.get(Number(employeeId));
+  let badge = tdName.querySelector(".lunch-name-badge");
+  if (!item) {
+    badge?.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.className = "lunch-name-badge";
+    badge.textContent = "🍽";
+    tdName.appendChild(badge);
+  }
+  const overdue = Date.now() > new Date(item.end_utc).getTime();
+  badge.classList.toggle("overdue", overdue);
+  badge.title = overdue ? `${lunchBadgeTitle(item)} — время вышло` : lunchBadgeTitle(item);
+}
+
+function applyLunchBadges() {
+  const map = activeLunchByEmployee();
+  document.querySelectorAll("#schedule-root tr[data-employee-id] td.employee-name").forEach((td) => {
+    decorateLunchBadge(td, td.parentElement.dataset.employeeId, map);
+  });
+}
+
+function renderLunchBoardButton() {
+  if (!btnLunchBoardEl) return;
+  const visible = !lunchBoard.unsupported && Boolean(state.auth.sessionToken);
+  btnLunchBoardEl.classList.toggle("hidden", !visible);
+  const count = activeLunchByEmployee().size;
+  if (lunchBoardCountEl) {
+    lunchBoardCountEl.textContent = String(count);
+    lunchBoardCountEl.classList.toggle("hidden", count === 0);
+  }
+  btnLunchBoardEl.title = count ? `Сейчас на обеде: ${count}` : "Обеды сотрудников сегодня";
+}
+
+async function refreshLunchBoard() {
+  if (!state.auth.sessionToken || lunchBoard.unsupported) return;
+  try {
+    const data = await apiClient.call("lunch.list", {});
+    lunchBoard.items = Array.isArray(data?.items) ? data.items : [];
+    lunchBoard.fetchedAt = Date.now();
+  } catch (err) {
+    if (err?.code === "UNKNOWN_ACTION") lunchBoard.unsupported = true;
+    else console.warn("lunch.list недоступен", err);
+  }
+  renderLunchBoardButton();
+  applyLunchBadges();
+  if (lunchBoard.open) renderLunchBoardPopover();
+}
+
+function lunchBoardRowHtml(item, kind) {
+  const start = isoToLocalHHMM(item.start_utc);
+  const plannedEnd = isoToLocalHHMM(item.end_utc);
+  const factEnd = item.ended_at ? isoToLocalHHMM(item.ended_at) : "";
+  const dept = item.dept ? `<span class="lunch-board-dept">${escapeHtml(item.dept)}</span>` : "";
+  let time = "";
+  let extra = "";
+  if (kind === "active") {
+    const leftMin = Math.ceil((new Date(item.end_utc).getTime() - Date.now()) / 60000);
+    time = `${start}–${plannedEnd}`;
+    extra = leftMin > 0
+      ? `<span class="lunch-board-left">ещё ${leftMin} мин</span>`
+      : `<span class="lunch-board-left overdue">время вышло</span>`;
+  } else if (kind === "scheduled") {
+    time = `с ${start}`;
+  } else {
+    time = `${start}–${factEnd || plannedEnd}`;
+    if (item.overdue || item.status === "auto") extra = `<span class="lunch-board-left overdue">опоздал</span>`;
+  }
+  return `<li class="lunch-board-item">
+      <span class="lunch-board-name">${escapeHtml(item.name || "—")}</span>${dept}
+      <span class="lunch-board-time">${time}</span>${extra}
+    </li>`;
+}
+
+function renderLunchBoardPopover() {
+  if (!lunchPopoverEl) return;
+  const nowMs = Date.now();
+  const active = [];
+  const scheduled = [];
+  const done = [];
+  for (const it of lunchBoard.items) {
+    if (lunchItemIsActive(it, nowMs)) active.push(it);
+    else if (it.status === "scheduled" || (it.status === "active" && new Date(it.start_utc).getTime() > nowMs)) scheduled.push(it);
+    else if (it.status !== "cancelled") done.push(it);
+  }
+  const section = (title, list, kind) =>
+    list.length
+      ? `<div class="lunch-board-section"><div class="lunch-board-section-title">${title} · ${list.length}</div>
+         <ul class="lunch-board-list">${list.map((i) => lunchBoardRowHtml(i, kind)).join("")}</ul></div>`
+      : "";
+  const body =
+    section("Сейчас на обеде", active, "active") +
+    section("Запланированы", scheduled, "scheduled") +
+    section("Уже пообедали", done.slice().reverse(), "done");
+  lunchPopoverEl.innerHTML = `
+    <div class="lunch-popover-title">🍽 Обеды сегодня</div>
+    ${body || `<div class="lunch-popover-note">Сегодня на обед ещё никто не уходил.</div>`}
+  `;
+}
+
+function openLunchBoard() {
+  createLunchPopover();
+  if (!lunchPopoverEl || !btnLunchBoardEl) return;
+  lunchPopoverEl.classList.add("lunch-board");
+  renderLunchBoardPopover();
+  lunchBoard.open = true;
+  lunchPopoverBackdropEl.classList.remove("hidden");
+  lunchPopoverEl.classList.remove("hidden");
+  positionPopoverNear(lunchPopoverEl, btnLunchBoardEl);
+  if (lunchPopoverKeydownHandler) document.removeEventListener("keydown", lunchPopoverKeydownHandler);
+  lunchPopoverKeydownHandler = (e) => {
+    if (e.key === "Escape") closeLunchPopover();
+  };
+  document.addEventListener("keydown", lunchPopoverKeydownHandler);
+  // Данным больше 15 секунд — обновим сразу
+  if (Date.now() - lunchBoard.fetchedAt > 15000) refreshLunchBoard();
+}
+
+btnLunchBoardEl?.addEventListener("click", () => {
+  if (lunchBoard.open) closeLunchPopover();
+  else openLunchBoard();
+});
 
 // -----------------------------
 // Поповер «Обед»: выбор «сейчас» или отложенного времени начала
@@ -3718,8 +3881,10 @@ function createLunchPopover() {
 }
 
 function closeLunchPopover() {
+  lunchBoard.open = false;
   if (!lunchPopoverEl) return;
   lunchPopoverEl.classList.add("hidden");
+  lunchPopoverEl.classList.remove("lunch-board");
   lunchPopoverBackdropEl?.classList.add("hidden");
   if (lunchPopoverKeydownHandler) {
     document.removeEventListener("keydown", lunchPopoverKeydownHandler);
@@ -3729,6 +3894,8 @@ function closeLunchPopover() {
 
 function openLunchPopover() {
   if (!lunchPopoverEl || !btnLunchEl) return;
+  lunchBoard.open = false;
+  lunchPopoverEl.classList.remove("lunch-board");
   const minutes = lunchUi.status?.lunchMinutes || 60;
   const remainMin = Math.floor(Number(lunchUi.status?.budgetRemainingSec || 0) / 60);
   const shiftEnd = lunchUi.status?.shiftEnd;
@@ -4500,6 +4667,7 @@ th1.appendChild(th1Label);
     const tdName = document.createElement("td");
     tdName.className = "sticky-col employee-name";
     tdName.textContent = row.employeeName;
+    decorateLunchBadge(tdName, row.employeeId);
     tr.appendChild(tdName);
 
     let totalAmount = 0;

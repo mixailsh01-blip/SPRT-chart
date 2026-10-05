@@ -4381,3 +4381,90 @@ body.swap-mode .app-toast {
 .vac-report .vac-del { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); opacity: 0.35; cursor: pointer; font-size: 12px; }
 .vac-report td.vac-status:hover .vac-del { opacity: 0.9; }
 .vac-report .vac-del:hover { color: #e5484d; }
+
+/* ---------- Обеды всех сотрудников ---------- */
+#btn-lunch-board.hidden {
+  display: none;
+}
+.lunch-board-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.lunch-board-count.hidden {
+  display: none;
+}
+.lunch-popover.lunch-board {
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+}
+.lunch-board-section + .lunch-board-section {
+  margin-top: 12px;
+}
+.lunch-board-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.lunch-board-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.lunch-board-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-strong);
+}
+.lunch-board-item:last-child {
+  border-bottom: none;
+}
+.lunch-board-name {
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.lunch-board-dept {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.lunch-board-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.lunch-board-left {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.lunch-board-left.overdue {
+  color: var(--danger);
+}
+.lunch-name-badge {
+  margin-left: 6px;
+  font-size: 13px;
+  cursor: help;
+}
+.lunch-name-badge.overdue {
+  filter: drop-shadow(0 0 2px var(--danger));
+}

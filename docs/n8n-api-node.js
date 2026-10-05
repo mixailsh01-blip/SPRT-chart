@@ -12,13 +12,16 @@ const FORM_VACATIONS = 2470368;
 const CAT_SHIFTS = 309671;
 const CAT_DEPARTMENTS = 309670;
 const F = { department: 1, person: 2, due: 3, amount: 4, template: 5 }; // поля формы «График работы»
-const V = { period: 1, year: 2, person: 3, department: 4, days: 5 }; // поля формы «График отпусков»
+const V = { period: 1, year: 2, person: 3, department: 4, days: 5, approved: 7 }; // поля формы «График отпусков»
 const LINES = [
-  { key: 'TP', name: 'ТП', editRoles: [1329637] },
-  { key: 'PO', name: 'ПО', editRoles: [1329638] },
+  { key: 'TP', name: 'ТП', editRoles: [1329637], memberRoles: [1329812] },
+  { key: 'PO', name: 'ПО', editRoles: [1329638], memberRoles: [] },
 ];
-const EDIT_ALL_ROLES = [];
-const CODE_TTL_MS = 10 * 60 * 1000;
+const ADMIN_ROLES = [1331784]; // полный админ: все смены, шаблоны смен, выдача ролей
+const EDIT_ALL_ROLES = [...ADMIN_ROLES];
+const SCHEDULE_EDITOR_ROLE = 1329637; // редактор графика ТП
+const HR_ROLE = 1300681; // менеджер по персоналу: согласует отпуска
+const CODE_TTL_MS = 5 * 60 * 1000;
 const RESEND_MS = 60 * 1000;
 const MAX_ATTEMPTS = 5;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -70,6 +73,14 @@ const scheduleRows = $('Смены: таблица').all().map((i) => i.json).fi
 // ---------- Pyrus ----------
 const http = (opts) => this.helpers.httpRequest({ json: true, ...opts });
 
+// Текст ошибки вместе с ответом Pyrus (иначе видно только «Request failed with status code 400»)
+function errText(e) {
+  let d = e && (e.context && e.context.data || e.cause && e.cause.response && e.cause.response.data || e.response && (e.response.data || e.response.body) || e.description);
+  if (d && typeof d !== 'string') { try { d = JSON.stringify(d); } catch (_) { d = ''; } }
+  const m = (e && e.message) || 'Ошибка бэкенда';
+  return d ? `${m}: ${String(d).slice(0, 300)}` : m;
+}
+
 // Токен Pyrus получает узел «Pyrus: токен» перед этим узлом (ключ бота хранится только там)
 async function pyrusToken() {
   const t = $('Pyrus: токен').first().json.access_token;
@@ -111,7 +122,12 @@ function permissionsFor(roles) {
   const ids = (roles || []).map(Number);
   const editAll = EDIT_ALL_ROLES.some((r) => ids.includes(r));
   const perms = { ALL: 'view' };
-  for (const line of LINES) perms[line.key] = editAll || line.editRoles.some((r) => ids.includes(r)) ? 'edit' : 'view';
+  for (const line of LINES) {
+    if (editAll || line.editRoles.some((r) => ids.includes(r))) perms[line.key] = 'edit';
+    // Обычный сотрудник отдела: правит только свои смены/отпуска
+    else if ((line.memberRoles || []).some((r) => ids.includes(r))) perms[line.key] = 'self';
+    else perms[line.key] = 'view';
+  }
   return perms;
 }
 
@@ -125,11 +141,14 @@ function currentSession() {
   return { ...s, key: hmac(`s:${token}`) };
 }
 
+const isAdminRoles = (roles) => (roles || []).map(Number).some((r) => ADMIN_ROLES.includes(r));
+
 function userPayload(s) {
   return {
     user: { id: s.memberId, name: s.name, login: s.email },
     roles: s.roles,
     permissions: permissionsFor(s.roles),
+    isAdmin: isAdminRoles(s.roles),
   };
 }
 
@@ -249,7 +268,8 @@ try {
       });
     }
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
-    store.codes[email] = { hash: hmac(`c:${email}:${code}`), exp: now + CODE_TTL_MS, attempts: MAX_ATTEMPTS, sentAt: now, memberId: m.id };
+    const link = crypto.randomBytes(18).toString('base64url'); // одноразовый токен для ссылки «войти одним кликом»
+    store.codes[email] = { hash: hmac(`c:${email}:${code}`), linkHash: hmac(`l:${link}`), exp: now + CODE_TTL_MS, attempts: MAX_ATTEMPTS, sentAt: now, memberId: m.id };
     const name = `${m.first_name} ${m.last_name}`.trim();
     // Продублировать код в Pyrus (задача на форме «Уведомления сотрудникам», form_id 2472006, поле 8 «Тип» =
     // choice_id 1 «Авторизация в график», поле 6 «Почта» = email, поле 9 «Пин-код» = код) — кнопка «Войти в
@@ -258,8 +278,8 @@ try {
     // а в Pyrus сотрудник видит уведомление сразу.
     return ok(
       { challengeId: email, ttlSec: CODE_TTL_MS / 1000 },
-      { to: m.email, code, name },
-      { pyrusNotify: { memberId: m.id, email, code } }
+      { to: m.email, code, name, link },
+      { pyrusNotify: { memberId: m.id, email, code, link } }
     );
   }
 
@@ -272,9 +292,33 @@ try {
       return fail(400, 'CODE_EXPIRED', 'Код истёк — запросите новый');
     }
     if (c.attempts <= 0) return fail(429, 'LOCKED', 'Слишком много попыток');
-    if (hmac(`c:${email}:${code}`) !== c.hash) {
+    if (hmac(`c:${email}:${code}`) !== c.hash && !(c.linkHash && hmac(`l:${code}`) === c.linkHash)) {
       c.attempts -= 1;
       return fail(400, c.attempts <= 0 ? 'LOCKED' : 'INVALID_CODE', 'Неверный код', { attemptsLeft: c.attempts });
+    }
+    delete store.codes[email];
+    const m = (await members()).find((x) => x.id === c.memberId);
+    const roles = await rolesOf(c.memberId);
+    const token = crypto.randomBytes(32).toString('hex');
+    const s = {
+      memberId: c.memberId,
+      email,
+      name: m ? `${m.last_name} ${m.first_name}`.trim() : email,
+      roles,
+      exp: now + SESSION_TTL_MS,
+    };
+    store.sessions[hmac(`s:${token}`)] = s;
+    return ok({ sessionToken: token, ...userPayload(s) });
+  }
+
+  // Вход по одноразовой ссылке (?li=токен): в адресе нет ни почты, ни кода
+  if (action === 'auth.link') {
+    const linkHash = hmac(`l:${String(p.token || '').trim()}`);
+    const email = Object.keys(store.codes).find((k) => store.codes[k].linkHash === linkHash);
+    const c = email && store.codes[email];
+    if (!c || c.exp < now) {
+      if (email) delete store.codes[email];
+      return fail(400, 'INVALID_LINK', 'Ссылка устарела — запросите новый код');
     }
     delete store.codes[email];
     const m = (await members()).find((x) => x.id === c.memberId);
@@ -295,7 +339,15 @@ try {
   const session = currentSession();
   if (!session) return fail(401, 'UNAUTHORIZED', 'Нет сессии или она истекла');
 
-  if (action === 'auth.me') return ok(userPayload(session));
+  if (action === 'auth.me') {
+    // Роли обновляем из Pyrus при каждом входе на страницу — выданная роль подхватывается без перелогина
+    try {
+      const fresh = await rolesOf(session.memberId);
+      if (store.sessions[session.key]) store.sessions[session.key].roles = fresh;
+      session.roles = fresh;
+    } catch (_) { /* оставляем роли из сессии */ }
+    return ok(userPayload(session));
+  }
 
   if (action === 'auth.logout') {
     delete store.sessions[session.key];
@@ -322,26 +374,39 @@ try {
     const deletes = changes.deleted?.task || [];
 
     const lineByItem = await departmentLines();
-    const canEditItem = (itemId) => perms[lineByItem[itemId]] === 'edit';
+    const me = Number(session.memberId);
+    // 'edit' — любые строки отдела; 'self' — только свои (employeeId = текущий пользователь)
+    const canEditItem = (itemId, employeeId) => {
+      const perm = perms[lineByItem[itemId]];
+      return perm === 'edit' || (perm === 'self' && Number(employeeId) === me);
+    };
 
-    async function assertTaskEditable(taskId) {
+    async function assertTaskEditable(taskId, newEmployeeId) {
       const t = await pyrus('GET', `/v4/tasks/${taskId}`);
       const task = t.task || t;
       if (task.form_id !== FORM_SCHEDULE) throw Object.assign(new Error('Задача не из формы графика'), { status: 403 });
       const dept = (task.fields || []).find((f) => f.id === F.department);
-      if (!canEditItem(dept?.value?.item_id)) throw Object.assign(new Error('Нет прав на подразделение задачи'), { status: 403 });
+      const person = Number((task.fields || []).find((f) => f.id === F.person)?.value?.id) || null;
+      if (!canEditItem(dept?.value?.item_id, person)) throw Object.assign(new Error('Нет прав на подразделение задачи'), { status: 403 });
+      if (newEmployeeId !== undefined && !canEditItem(dept?.value?.item_id, newEmployeeId)) throw Object.assign(new Error('Нет прав назначать смену этому сотруднику'), { status: 403 });
     }
 
-    const fieldsOf = (t) => [
-      { id: F.department, value: { item_id: t.department_item_id } },
-      { id: F.person, value: { id: t.employee_id } },
-      { id: F.due, value: t.start, duration: Number(t.duration) },
-      { id: F.amount, value: Number(t.amount || 0) },
-      { id: F.template, value: { item_id: t.item_id } },
-    ];
+    const fieldsOf = (t) => {
+      const fields = [
+        { id: F.department, value: { item_id: t.department_item_id } },
+        { id: F.person, value: { id: t.employee_id } },
+        { id: F.due, value: t.start, duration: Number(t.duration) },
+        { id: F.amount, value: Number(t.amount || 0) },
+      ];
+      // Поле «Смена» — только для смен по шаблону; при ручном вводе времени шаблона нет, поле не трогаем
+      if (t.item_id != null && t.item_id !== '') fields.push({ id: F.template, value: { item_id: Number(t.item_id) } });
+      // Шаблонная смена стала кастомной (правка): очищаем поле «Смена»
+      else if (t.clear_template) fields.push({ id: F.template, value: null });
+      return fields;
+    };
 
     for (const t of [...creates, ...edits]) {
-      if (!canEditItem(t.department_item_id)) return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого подразделения');
+      if (!canEditItem(t.department_item_id, t.employee_id)) return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого подразделения или сотрудника');
     }
 
     // Запросы к Pyrus идут параллельно (до CONCURRENCY одновременно), а не по одному
@@ -374,16 +439,16 @@ try {
           const r = await pyrus('POST', '/v4/tasks', { form_id: FORM_SCHEDULE, fields: fieldsOf(t) });
           rememberTask(r && r.task, t.telephony);
           result.created++;
-        } catch (e) { result.errors.push({ op: 'create', employee_id: t.employee_id, start: t.start, message: e.message }); }
+        } catch (e) { result.errors.push({ op: 'create', employee_id: t.employee_id, start: t.start, message: errText(e) }); }
       }),
       ...edits.map((t) => async () => {
         try {
-          await assertTaskEditable(t.task_id);
+          await assertTaskEditable(t.task_id, t.employee_id);
           const r = await pyrus('POST', `/v4/tasks/${t.task_id}/comments`, { field_updates: fieldsOf(t) });
           if (r && r.task) rememberTask(r.task, t.telephony);
           else telUpdates.push({ task_id: t.task_id, telephony: t.telephony !== false });
           result.edited++;
-        } catch (e) { result.errors.push({ op: 'edit', task_id: t.task_id, message: e.message }); }
+        } catch (e) { result.errors.push({ op: 'edit', task_id: t.task_id, message: errText(e) }); }
       }),
       ...deletes.map((t) => async () => {
         try {
@@ -391,7 +456,7 @@ try {
           await pyrus('DELETE', `/v4/tasks/${t.task_id}`);
           result.deletedIds.push(t.task_id);
           result.deleted++;
-        } catch (e) { result.errors.push({ op: 'delete', task_id: t.task_id, message: e.message }); }
+        } catch (e) { result.errors.push({ op: 'delete', task_id: t.task_id, message: errText(e) }); }
       }),
     ];
     await runPool(jobs);
@@ -563,12 +628,118 @@ try {
     return out;
   }
 
+
+  // ---------- Настройки: шаблоны смен (справочник Pyrus «смены») ----------
+  // Админ — шаблоны для «ВСЕ» и для ТП; редактор графика — только для ТП.
+  const SHIFT_CAT_COLS = { name: 'Названия смен', time: 'Время работы', amount: 'Сумма за смену', dept: 'Отдел' };
+  const deptTokenOf = (raw) => String(raw || '').trim().toUpperCase();
+  const shiftsCatalog = async () => {
+    const r = await pyrus('GET', `/v4/catalogs/${CAT_SHIFTS}`);
+    const cat = Array.isArray(r) ? r[0] : r;
+    const headers = (cat.catalog_headers || []).map((h) => String((h && h.name) || h || '').trim());
+    const col = (title, fallbacks) => {
+      let i = headers.findIndex((h) => h.toLowerCase() === title.toLowerCase());
+      if (i < 0) i = headers.findIndex((h) => fallbacks.some((f) => h.toLowerCase().includes(f)));
+      return i;
+    };
+    return {
+      cat,
+      headers,
+      items: cat.items || [],
+      idx: {
+        name: Math.max(0, col(SHIFT_CAT_COLS.name, ['назван', 'смен'])),
+        time: col(SHIFT_CAT_COLS.time, ['время']),
+        amount: col(SHIFT_CAT_COLS.amount, ['сумм']),
+        dept: col(SHIFT_CAT_COLS.dept, ['отдел', 'подразд']),
+      },
+    };
+  };
+  // Можно ли пользователю менять шаблон с таким значением колонки «Отдел»
+  const canManageTemplate = (roles, deptRaw) => {
+    if (isAdminRoles(roles)) return true;
+    const perms = permissionsFor(roles);
+    const tokens = deptTokenOf(deptRaw).split(/[,/;]/).map((t) => t.trim()).filter(Boolean);
+    return perms.TP === 'edit' && tokens.length === 1 && tokens[0] === 'ТП';
+  };
+
+  if (action === 'settings.shift.save') {
+    const name = String(p.name || '').trim();
+    const time = String(p.time || '').trim();
+    const amount = Number(p.amount || 0);
+    const dept = String(p.dept || '').trim().toUpperCase() === 'ТП' ? 'ТП' : 'ВСЕ';
+    if (!name || name.length > 60) return fail(400, 'BAD_REQUEST', 'Укажите название смены (до 60 символов)');
+    if (!/^\d{1,2}[:.]\d{2}\s*-\s*\d{1,2}[:.]\d{2}$/.test(time)) return fail(400, 'BAD_REQUEST', 'Время смены — в формате 08:00-20:00');
+    if (!Number.isFinite(amount) || amount < 0 || amount > 1000000) return fail(400, 'BAD_REQUEST', 'Некорректная сумма');
+    if (!canManageTemplate(session.roles, dept)) return fail(403, 'FORBIDDEN', 'Нет прав на шаблоны смен этого отдела');
+    const sc = await shiftsCatalog();
+    // Нельзя перезаписать чужой шаблон с тем же названием
+    const existing = sc.items.find((it) => String((it.values || [])[sc.idx.name] || '').trim().toUpperCase() === name.toUpperCase());
+    if (existing && !canManageTemplate(session.roles, sc.idx.dept >= 0 ? (existing.values || [])[sc.idx.dept] : '')) {
+      return fail(403, 'FORBIDDEN', 'Шаблон с таким названием уже есть и вам недоступен');
+    }
+    if (sc.idx.name !== 0) return fail(502, 'BACKEND_ERROR', 'Название смены должно быть первой колонкой справочника');
+    const values = sc.headers.map(() => '');
+    values[sc.idx.name] = name;
+    if (sc.idx.time >= 0) values[sc.idx.time] = time.replace(/\s+/g, '');
+    if (sc.idx.amount >= 0) values[sc.idx.amount] = String(amount);
+    if (sc.idx.dept >= 0) values[sc.idx.dept] = dept;
+    const rows = sc.items.map((it) => ({ values: (it.values || []).map((v) => String(v == null ? '' : v)) }));
+    const at = rows.findIndex((r) => String(r.values[sc.idx.name] || '').trim().toUpperCase() === name.toUpperCase());
+    if (at >= 0) rows[at] = { values }; else rows.push({ values });
+    await pyrus('POST', `/v4/catalogs/${CAT_SHIFTS}`, { apply: true, catalog_headers: sc.headers, items: rows });
+    return ok({ saved: name });
+  }
+
+  if (action === 'settings.shift.delete') {
+    const itemId = Number(p.item_id);
+    if (!Number.isInteger(itemId) || itemId <= 0) return fail(400, 'BAD_REQUEST', 'Не указан шаблон');
+    const sc = await shiftsCatalog();
+    const item = sc.items.find((it) => Number(it.item_id) === itemId);
+    if (!item) return fail(404, 'NOT_FOUND', 'Шаблон не найден');
+    if (!canManageTemplate(session.roles, sc.idx.dept >= 0 ? (item.values || [])[sc.idx.dept] : '')) {
+      return fail(403, 'FORBIDDEN', 'Нет прав на удаление этого шаблона');
+    }
+    const key = String((item.values || [])[sc.idx.name] || '');
+    const rows = sc.items
+      .filter((it) => Number(it.item_id) !== itemId)
+      .map((it) => ({ values: (it.values || []).map((v) => String(v == null ? '' : v)) }));
+    await pyrus('POST', `/v4/catalogs/${CAT_SHIFTS}`, { apply: true, catalog_headers: sc.headers, items: rows });
+    return ok({ deleted: key });
+  }
+
+  // ---------- Настройки: выдача ролей (только полный админ) ----------
+  if (action === 'settings.role.set') {
+    if (!isAdminRoles(session.roles)) return fail(403, 'FORBIDDEN', 'Роли выдаёт только администратор');
+    const memberId = Number(p.member_id);
+    const grant = p.grant !== false;
+    const roleKey = String(p.role || '');
+    const roleId = roleKey === 'admin' ? ADMIN_ROLES[0] : roleKey === 'editor' ? SCHEDULE_EDITOR_ROLE : null;
+    if (!Number.isInteger(memberId) || memberId <= 0 || roleId == null) return fail(400, 'BAD_REQUEST', 'Не указан сотрудник или роль');
+    if (!grant && roleKey === 'admin' && memberId === Number(session.memberId)) {
+      return fail(400, 'BAD_REQUEST', 'Нельзя снять админку с самого себя');
+    }
+    const all = await members();
+    if (!all.some((m) => m.id === memberId && !m.banned)) return fail(404, 'NOT_FOUND', 'Сотрудник не найден');
+    await pyrus('PUT', `/v4/roles/${roleId}`, grant ? { member_add: [memberId] } : { member_remove: [memberId] });
+    // Уже выданные сессии этого человека обновляем сразу, без повторного входа
+    for (const sess of Object.values(store.sessions)) {
+      if (Number(sess.memberId) !== memberId) continue;
+      const set = new Set((sess.roles || []).map(Number));
+      if (grant) set.add(roleId); else set.delete(roleId);
+      sess.roles = [...set];
+    }
+    return ok({ member_id: memberId, role: roleKey, granted: grant });
+  }
+
   // Отпуск: задача формы «График отпусков». Период — даты без времени, как их создаёт Pyrus:
   // value = первый день T00:00:00Z, duration = (дней − 1) × 1440.
   if (action === 'vacation.create') {
     const perms = permissionsFor(session.roles);
     const line = LINES.find((l) => l.key === p.line);
-    if (!line || perms[line.key] !== 'edit') return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого подразделения');
+    // Админ и менеджер по персоналу добавляют отпуск любому сотруднику (отдел можно не указывать)
+    const isHr = isAdminRoles(session.roles) || (session.roles || []).map(Number).includes(HR_ROLE);
+    const canVac = isHr || (line && (perms[line.key] === 'edit' || (perms[line.key] === 'self' && Number(p.employee_id) === Number(session.memberId))));
+    if (!canVac) return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого подразделения');
     const employeeId = Number(p.employee_id);
     const days = Number(p.days);
     const start = String(p.start_date || '');
@@ -591,8 +762,8 @@ try {
       }
       store.vacDeptChoices = { at: now, map: choices };
     }
-    const choiceId = choices[line.name.toUpperCase()];
-    if (choiceId == null) return fail(502, 'BACKEND_ERROR', `В форме отпусков нет отдела «${line.name}»`);
+    const choiceId = line ? choices[line.name.toUpperCase()] : null;
+    if (line && choiceId == null) return fail(502, 'BACKEND_ERROR', `В форме отпусков нет отдела «${line.name}»`);
 
     const period = { id: V.period, value: `${start}T00:00:00Z` };
     if (days > 1) period.duration = (days - 1) * 1440;
@@ -602,7 +773,7 @@ try {
         period,
         { id: V.year, value: start.slice(0, 4) },
         { id: V.person, value: { id: employeeId } },
-        { id: V.department, value: { choice_ids: [choiceId] } },
+        ...(choiceId != null ? [{ id: V.department, value: { choice_ids: [choiceId] } }] : []),
         { id: V.days, value: days },
       ],
     });
@@ -618,12 +789,34 @@ try {
     if (task.form_id !== FORM_VACATIONS) return fail(403, 'FORBIDDEN', 'Задача не из формы отпусков');
     const dept = findFieldDeep(task.fields || [], V.department);
     const line = lineByName(dept && dept.value && (dept.value.choice_names || [])[0]);
-    if (!line || perms[line.key] !== 'edit') return fail(403, 'FORBIDDEN', 'Нет прав на отдел этого отпуска');
+    const vacPerson = Number(findFieldDeep(task.fields || [], V.person)?.value?.id) || null;
+    const isHrDel = isAdminRoles(session.roles) || (session.roles || []).map(Number).includes(HR_ROLE);
+    const canDelVac = isHrDel || (line && (perms[line.key] === 'edit' || (perms[line.key] === 'self' && vacPerson === Number(session.memberId))));
+    if (!canDelVac) return fail(403, 'FORBIDDEN', 'Нет прав на отдел этого отпуска');
     await pyrus('DELETE', `/v4/tasks/${taskId}`);
     return ok({ deletedId: taskId });
   }
 
+  // Согласование отпуска (флажок «Согласован»): админ или менеджер по персоналу
+  if (action === 'vacation.approve') {
+    const roleIds = (session.roles || []).map(Number);
+    if (!ADMIN_ROLES.some((r) => roleIds.includes(r)) && !roleIds.includes(HR_ROLE)) {
+      return fail(403, 'FORBIDDEN', 'Согласовывать отпуска могут менеджер по персоналу и админ');
+    }
+    const taskId = Number(p.task_id);
+    if (!Number.isInteger(taskId) || taskId <= 0) return fail(400, 'BAD_REQUEST', 'Не указан отпуск');
+    const t = await pyrus('GET', `/v4/tasks/${taskId}`);
+    const task = t.task || t;
+    if (task.form_id !== FORM_VACATIONS) return fail(403, 'FORBIDDEN', 'Задача не из формы отпусков');
+    const approved = p.approved === true;
+    await pyrus('POST', `/v4/tasks/${taskId}/comments`, {
+      field_updates: [{ id: V.approved, value: approved ? 'checked' : 'unchecked' }],
+    });
+    return ok({ taskId, approved });
+  }
+
   return fail(400, 'UNKNOWN_ACTION', `Неизвестный action: ${action}`);
 } catch (e) {
-  return fail(e.status || 502, 'BACKEND_ERROR', e.message || 'Ошибка бэкенда');
+  return fail(e.status || 502, 'BACKEND_ERROR', errText(e));
 }
+

@@ -26,6 +26,7 @@ export const API_ACTIONS = Object.freeze({
   LUNCH_STATUS: "lunch.status",
   LUNCH_START: "lunch.start",
   LUNCH_END: "lunch.end",
+  LUNCH_LIST: "lunch.list",
 });
 
 const PUBLIC_ACTIONS = new Set([API_ACTIONS.AUTH_START, API_ACTIONS.AUTH_VERIFY, API_ACTIONS.AUTH_LINK]);
