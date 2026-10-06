@@ -3609,6 +3609,9 @@ function handleLunchVisibility() {
 }
 
 function startLunchWidget() {
+  if (!lunchBoard.items.length) restoreLunchBoardCache();
+  renderLunchBoardButton();
+  applyLunchBadges();
   refreshLunchStatus();
   refreshLunchBoard();
   if (!lunchUi.poll) {
@@ -3689,6 +3692,25 @@ async function endOrCancelLunch() {
 // (сейчас на обеде / запланированы / уже были). У имени сотрудника в графике — значок 🍽, пока он на обеде.
 
 const lunchBoard = { items: [], fetchedAt: 0, unsupported: false, open: false };
+const LUNCH_BOARD_CACHE_KEY = "sprt_lunch_board_v1";
+
+// Последний список держим в localStorage — после перезагрузки счётчик и пометки видны сразу,
+// а свежие данные подтягиваются в фоне.
+function restoreLunchBoardCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(LUNCH_BOARD_CACHE_KEY) || "null");
+    if (c && Array.isArray(c.items) && Date.now() - Number(c.at || 0) < 10 * 60 * 1000) {
+      lunchBoard.items = c.items;
+      lunchBoard.fetchedAt = 0;
+    }
+  } catch (_) {}
+}
+
+function saveLunchBoardCache() {
+  try {
+    localStorage.setItem(LUNCH_BOARD_CACHE_KEY, JSON.stringify({ at: Date.now(), items: lunchBoard.items }));
+  } catch (_) {}
+}
 
 function lunchItemIsActive(item, nowMs = Date.now()) {
   if (item.status !== "active") return false;
@@ -3735,13 +3757,20 @@ function decorateTelDotLunch(dot, activeMap = null) {
   const map = activeMap || activeLunchByEmployee();
   const item = map.get(Number(dot.dataset.employeeId));
   let onLunch = false;
-  if (item && dot.dataset.start && dot.dataset.end) {
+  if (item) {
     const t = new Date(item.start_utc).getTime();
     const nowMs = Date.now();
-    const start = new Date(dot.dataset.start).getTime();
-    const end = new Date(dot.dataset.end).getTime();
-    onLunch = (t >= start && t < end) || (nowMs >= start && nowMs < end);
+    const start = new Date(dot.dataset.start || "").getTime();
+    const end = new Date(dot.dataset.end || "").getTime();
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      onLunch = (t >= start && t < end) || (nowMs >= start && nowMs < end);
+    } else if (dot.dataset.day) {
+      // Нет точного времени смены — сравниваем по местной дате
+      onLunch = new Date(t + TIMEZONE_OFFSET_MIN * 60000).toISOString().slice(0, 10) === dot.dataset.day;
+    }
   }
+  // Красная пометка на самой смене
+  dot.parentElement?.classList.toggle("on-lunch", onLunch);
   const was = dot.classList.contains("lunch");
   if (onLunch) {
     if (!was) {
@@ -3785,6 +3814,7 @@ async function refreshLunchBoard() {
     const data = await apiClient.call("lunch.list", {});
     lunchBoard.items = Array.isArray(data?.items) ? data.items : [];
     lunchBoard.fetchedAt = Date.now();
+    saveLunchBoardCache();
   } catch (err) {
     if (err?.code === "UNKNOWN_ACTION") lunchBoard.unsupported = true;
     else console.warn("lunch.list недоступен", err);
@@ -4871,8 +4901,9 @@ th1.appendChild(th1Label);
         if (shift.startUtcIso) telDot.dataset.start = shift.startUtcIso;
         if (shift.endUtcIso) telDot.dataset.end = shift.endUtcIso;
         telDot.dataset.employeeId = String(row.employeeId);
-        decorateTelDotLunch(telDot);
+        telDot.dataset.day = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
         pill.appendChild(telDot);
+        decorateTelDotLunch(telDot);
         td.appendChild(pill);
 
         totalAmount += shift.amount || 0;

@@ -4490,3 +4490,10 @@ body.swap-mode .app-toast {
 .telephony-dot.lunch.overdue {
   box-shadow: 0 0 0 1.5px var(--danger);
 }
+
+/* Смена, во время которой сотрудник сейчас на обеде: жёлтая пометка */
+.shift-pill.on-lunch {
+  outline: 2px solid #F5C518;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.3);
+}
