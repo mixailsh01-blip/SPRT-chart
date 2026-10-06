@@ -3726,8 +3726,42 @@ function decorateLunchBadge(tdName, employeeId, activeMap = null) {
   badge.title = overdue ? `${lunchBadgeTitle(item)} — время вышло` : lunchBadgeTitle(item);
 }
 
+// Точка телефонии на смене, во время которой сотрудник сейчас на обеде: серая с часиками.
+const LUNCH_DOT_SVG =
+  '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 3.6V6l1.7 1.1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+
+function decorateTelDotLunch(dot, activeMap = null) {
+  if (!dot) return;
+  const map = activeMap || activeLunchByEmployee();
+  const item = map.get(Number(dot.dataset.employeeId));
+  let onLunch = false;
+  if (item && dot.dataset.start && dot.dataset.end) {
+    const t = new Date(item.start_utc).getTime();
+    const nowMs = Date.now();
+    const start = new Date(dot.dataset.start).getTime();
+    const end = new Date(dot.dataset.end).getTime();
+    onLunch = (t >= start && t < end) || (nowMs >= start && nowMs < end);
+  }
+  const was = dot.classList.contains("lunch");
+  if (onLunch) {
+    if (!was) {
+      dot.dataset.prevTitle = dot.title;
+      dot.innerHTML = LUNCH_DOT_SVG;
+    }
+    dot.classList.add("lunch");
+    const overdue = Date.now() > new Date(item.end_utc).getTime();
+    dot.classList.toggle("overdue", overdue);
+    dot.title = overdue ? `${lunchBadgeTitle(item)} — время вышло` : lunchBadgeTitle(item);
+  } else if (was) {
+    dot.classList.remove("lunch", "overdue");
+    dot.innerHTML = "";
+    dot.title = dot.dataset.prevTitle || dot.title;
+  }
+}
+
 function applyLunchBadges() {
   const map = activeLunchByEmployee();
+  document.querySelectorAll("#schedule-root .telephony-dot[data-employee-id]").forEach((dot) => decorateTelDotLunch(dot, map));
   document.querySelectorAll("#schedule-root tr[data-employee-id] td.employee-name").forEach((td) => {
     decorateLunchBadge(td, td.parentElement.dataset.employeeId, map);
   });
@@ -4834,6 +4868,10 @@ th1.appendChild(th1Label);
         const onPhone = shift.telephony !== false;
         telDot.className = `telephony-dot ${onPhone ? "on" : "off"}`;
         telDot.title = onPhone ? "Включён в телефонию" : "Не в телефонии (выезд)";
+        if (shift.startUtcIso) telDot.dataset.start = shift.startUtcIso;
+        if (shift.endUtcIso) telDot.dataset.end = shift.endUtcIso;
+        telDot.dataset.employeeId = String(row.employeeId);
+        decorateTelDotLunch(telDot);
         pill.appendChild(telDot);
         td.appendChild(pill);
 

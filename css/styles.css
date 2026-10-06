@@ -4468,3 +4468,25 @@ body.swap-mode .app-toast {
 .lunch-name-badge.overdue {
   filter: drop-shadow(0 0 2px var(--danger));
 }
+
+/* Точка телефонии на смене, когда сотрудник на обеде: серая с часиками */
+.telephony-dot.lunch {
+  width: 13px;
+  height: 13px;
+  top: -6px;
+  right: -6px;
+  background: #8A97A3;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+}
+.telephony-dot.lunch svg {
+  width: 11px;
+  height: 11px;
+  display: block;
+}
+.telephony-dot.lunch.overdue {
+  box-shadow: 0 0 0 1.5px var(--danger);
+}
