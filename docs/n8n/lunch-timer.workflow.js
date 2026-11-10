@@ -8,7 +8,7 @@ import { workflow, node, trigger, expr } from '@n8n/workflow-sdk';
 
 const MANAGER_EMAILS = 'm.demetiev@sprt-service.ru'; // руководитель(и) — через запятую
 const LUNCH_TABLE = { __rl: true, mode: 'id', value: 'JugiHxYKjZsK9R2t', cachedResultName: 'sprt_lunch' };
-const MANGO_SYNC_URL = 'https://6009071-by70196.twc1.net/webhook/sprt-mango-sync-919f9cf55c361996';
+const MANGO_SYNC_URL = 'https://n8n.sprt-service.ru/webhook/sprt-mango-sync-919f9cf55c361996';
 
 // Единый брендинг всех писем SPRT (тот же shell — в «Письмо с кодом» / «Уведомление: письмо» узла «API»
 // воркфлоу SPRT-chart API). Между header/footer подставляется контент письма.

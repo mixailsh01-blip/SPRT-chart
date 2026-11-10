@@ -59,7 +59,7 @@ const processNode = node({
 // письмо повторного входа (через тот же webhook sprt-chart, action auth.start) и запоминаем task_id.
 const FORM_ID = 2472006;
 const FIELD_PERSON = 3;
-const NOTIFY_WEBHOOK = 'https://6009071-by70196.twc1.net/webhook/sprt-chart';
+const NOTIFY_WEBHOOK = 'https://n8n.sprt-service.ru/webhook/sprt-chart';
 
 const token = $('Pyrus: токен').first().json.access_token;
 if (!token) return [];
