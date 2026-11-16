@@ -236,6 +236,13 @@ test('роль 1331872 редактирует смены вне ТП из вкл
       { item_id: tpDepartmentId, values: ['ТП'] },
       { item_id: otherDepartmentId, values: ['Бухгалтерия'] },
     ] };
+    if (path === '/v4/catalogs/309671') return {
+      catalog_headers: [{ name: 'Названия смен' }, { name: 'Отдел' }],
+      items: [
+        { item_id: 20, values: ['СМЕНА 2/2', 'ТП'] },
+        { item_id: 21, values: ['СМЕНА 5/2', 'ВСЕ'] },
+      ],
+    };
     if (path === '/v4/forms/2470373/register') return structuredClone({ tasks: [tpTask, existing] });
     if (path === '/v4/tasks' && method === 'POST' && body.form_id === 2472006) return { task: { id: 900 } };
     if (path === '/v4/tasks' && method === 'POST') {
@@ -272,9 +279,16 @@ test('роль 1331872 редактирует смены вне ТП из вкл
   assert.equal(forbiddenDelete.body.data.deleted, 0);
   assert.equal(writes.length, 0);
 
-  assert.equal((await save('create', create(other.id))).body.data.created, 1);
+  const wrongTemplate = await save('create', { ...create(other.id), item_id: 20 });
+  assert.equal(wrongTemplate.status, 403);
+  assert.equal(wrongTemplate.body.error.code, 'FORBIDDEN_TEMPLATE');
+  assert.equal(writes.length, 0);
+  assert.equal((await save('create', { ...create(other.id), item_id: 21 })).body.data.created, 1);
   assert.equal(writes[0].find(field => field.id === 1).value.item_id, otherDepartmentId);
-  assert.equal((await save('edit', { ...create(other.id), task_id: existing.id })).body.data.edited, 1);
+  const wrongEdit = await save('edit', { ...create(other.id), task_id: existing.id, item_id: 20 });
+  assert.equal(wrongEdit.body.data.edited, 0);
+  assert.equal(writes.length, 1);
+  assert.equal((await save('edit', { ...create(other.id), task_id: existing.id, item_id: 21 })).body.data.edited, 1);
   assert.equal(writes[1].some(field => field.id === 1), false);
 
   granted = false;

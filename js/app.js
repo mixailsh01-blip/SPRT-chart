@@ -9,6 +9,7 @@ import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
 import { createVacationsService } from "./services/vacationsService.js?v=7";
+import { isShiftTemplateAvailable } from "./services/shiftTemplateScope.js";
 import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=6";
@@ -1021,7 +1022,9 @@ async function init() {
 }
 
 function getCurrentLineTemplates() {
-  return state.shiftTemplatesByLine[state.ui.currentLine] || [];
+  const line = state.ui.currentLine;
+  const templates = state.shiftTemplatesByLine[line] || [];
+  return line === "ALL" ? templates.filter(template => isShiftTemplateAvailable(template.dept)) : templates;
 }
 
 function initMonthMetaToToday() {
@@ -2710,7 +2713,7 @@ function updateSaveButtonState() {
 }
 
 function getQuickModeShift(line) {
-  const templates = state.shiftTemplatesByLine[line] || [];
+  const templates = line === "ALL" ? getCurrentLineTemplates() : state.shiftTemplatesByLine[line] || [];
   const tmpl = templates.find((t) => t.id === state.quickMode.templateId);
 
   let startLocal = state.quickMode.timeFrom;
@@ -4309,7 +4312,7 @@ async function loadShiftsCatalog() {
     const template = { id: item.item_id, name, timeRaw, amount, dept, timeRange, specialShortLabel };
 
     const tokens = parseDeptTokens(dept);
-    const targets = tokens.length === 0 || tokens.includes("ALL") ? ALL_LINE_KEYS : ["ALL", ...tokens];
+    const targets = isShiftTemplateAvailable(dept) ? ALL_LINE_KEYS : ["ALL", ...tokens];
     for (const key of new Set(targets)) templatesByLine[key].push(template);
   }
 
@@ -5590,11 +5593,17 @@ function openShiftPopover(context, anchorEl) {
   let touched = false;
   let selectedTemplateId = shift?.templateId ?? null;
 
-  const templates = state.shiftTemplatesByLine[line] || [];
+  const lineTemplates = state.shiftTemplatesByLine[line] || [];
+  const department = line === "ALL"
+    ? state.employeesByLine.ALL.find(employee => Number(employee.id) === Number(employeeId))?.departmentName
+    : null;
+  const templates = line === "ALL"
+    ? lineTemplates.filter(template => isShiftTemplateAvailable(template.dept, department))
+    : lineTemplates;
 
   // «Кастомная смена»: смена без шаблона или с временем, не совпадающим с шаблоном.
   // Время и сумма показываются только для неё, для шаблонов они берутся из шаблона.
-  const shiftTemplate = templates.find((t) => t.id === shift?.templateId);
+  const shiftTemplate = lineTemplates.find((t) => t.id === shift?.templateId);
   const matchesTemplate =
     Boolean(shiftTemplate?.timeRange) &&
     normalizeTimeHHMM(shiftTemplate.timeRange.start) === normalizeTimeHHMM(shift?.startLocal) &&

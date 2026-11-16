@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import portalConfig from '../config.json' with { type: 'json' };
+import { isShiftTemplateAvailable } from '../js/services/shiftTemplateScope.js';
 import { findSession } from './sessions.mjs';
 
 function listLunches(lunches, now) {
@@ -423,6 +424,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       const me = Number(session.memberId);
       let canEditItem;
       let departmentForEmployee;
+      let templateAllowed;
       if (inAll) {
         if (perms.ALL !== 'edit') return fail(403, 'FORBIDDEN', 'Нет прав на редактирование вкладки «ВСЕ»');
         const [membersData, rolesData, catalog, registry] = await Promise.all([
@@ -482,6 +484,26 @@ export async function handleAction({ request, store, telephony, lunches, schedul
           return departmentsByName.get(departmentName(employees.get(id)?.department_name)) ||
             knownDepartments.get(id)?.departmentId;
         };
+
+        const withTemplate = [...creates, ...edits].some(task => task.item_id != null && task.item_id !== '');
+        if (withTemplate) {
+          const shifts = await shiftsCatalog();
+          const templates = new Map(shifts.items.map(item => [Number(item.item_id), item]));
+          const departmentById = new Map([...departmentsByName].map(([name, id]) => [id, name]));
+          templateAllowed = (newShift, currentShift) => {
+            if (newShift.item_id == null || newShift.item_id === '') return true;
+            const current = field => currentShift?.fields?.find(entry => entry.id === field)?.value;
+            const templateId = Number(newShift.item_id);
+            // Старые смены могут ссылаться на шаблон, доступность которого изменилась.
+            if (templateId === Number(current(F.template)?.item_id) &&
+                Number(newShift.employee_id) === Number(current(F.person)?.id)) return true;
+            const template = templates.get(templateId);
+            const id = Number(newShift.employee_id);
+            const departmentId = Number(current(F.department)?.item_id || departmentForEmployee(id));
+            const name = departmentById.get(departmentId) || employees.get(id)?.department_name;
+            return Boolean(template && isShiftTemplateAvailable(template.values?.[shifts.idx.dept], name));
+          };
+        }
       } else {
         const lineByItem = await departmentLines();
         canEditItem = (itemId, employeeId) => {
@@ -499,6 +521,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
         const date = (task.fields || []).find((f) => f.id === F.due)?.value;
         if (!canEditItem(dept?.value?.item_id, person, date)) throw Object.assign(new Error('Нет прав на подразделение задачи'), { status: 403 });
         if (newEmployeeId !== undefined && !canEditItem(dept?.value?.item_id, newEmployeeId, date)) throw Object.assign(new Error('Нет прав назначать смену этому сотруднику'), { status: 403 });
+        return task;
       }
 
       const fieldsOf = (t, create = false) => {
@@ -522,6 +545,10 @@ export async function handleAction({ request, store, telephony, lunches, schedul
 
       for (const t of [...creates, ...edits]) {
         if (!canEditItem(t.department_item_id, t.employee_id, t.start)) return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого подразделения или сотрудника');
+      }
+
+      if (templateAllowed && creates.some(task => !templateAllowed(task))) {
+        return fail(403, 'FORBIDDEN_TEMPLATE', 'Шаблон смены недоступен для подразделения сотрудника');
       }
 
       // Запросы к Pyrus идут параллельно (до CONCURRENCY одновременно), а не по одному
@@ -560,7 +587,10 @@ export async function handleAction({ request, store, telephony, lunches, schedul
         }),
         ...edits.map((t) => async () => {
           try {
-            await assertTaskEditable(t.task_id, t.employee_id);
+            const currentShift = await assertTaskEditable(t.task_id, t.employee_id);
+            if (templateAllowed && !templateAllowed(t, currentShift)) {
+              throw new Error('Шаблон смены недоступен для подразделения сотрудника');
+            }
             const r = await pyrus('POST', `/v4/tasks/${t.task_id}/comments`, { field_updates: fieldsOf(t) });
             if (r && r.task) rememberTask(r.task, t.telephony, t.duration);
             else telUpdates.push({ task_id: t.task_id, telephony: t.telephony !== false, duration_min: Number(t.duration) > 0 ? Number(t.duration) : null });
@@ -747,9 +777,9 @@ export async function handleAction({ request, store, telephony, lunches, schedul
 
     // ---------- Настройки: шаблоны смен (справочник Pyrus «смены») ----------
     // Админ — шаблоны для «ВСЕ» и для ТП; редактор графика — только для ТП.
-    const SHIFT_CAT_COLS = { name: 'Названия смен', time: 'Время работы', amount: 'Сумма за смену', dept: 'Отдел' };
     const deptTokenOf = (raw) => String(raw || '').trim().toUpperCase();
-    const shiftsCatalog = async () => {
+    async function shiftsCatalog() {
+      const SHIFT_CAT_COLS = { name: 'Названия смен', time: 'Время работы', amount: 'Сумма за смену', dept: 'Отдел' };
       const r = await pyrus('GET', `/v4/catalogs/${CAT_SHIFTS}`);
       const cat = Array.isArray(r) ? r[0] : r;
       const headers = (cat.catalog_headers || []).map((h) => String((h && h.name) || h || '').trim());
@@ -768,7 +798,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
           amount: col(SHIFT_CAT_COLS.amount, ['сумм']),
           dept: col(SHIFT_CAT_COLS.dept, ['отдел', 'подраздел']),
         },
-      };
+      }
     };
     // Можно ли пользователю менять шаблон с таким значением колонки «Отдел»
     const canManageTemplate = (roles, deptRaw) => {
