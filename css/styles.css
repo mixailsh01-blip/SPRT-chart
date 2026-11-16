@@ -2107,12 +2107,7 @@ body.legend-open {
   background: var(--bg-alt);
   background: color-mix(in srgb, var(--bg-alt) 55%, var(--calendar-holiday-bg));
   color: var(--text);
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 1.2;
   text-align: center;
-  overflow-wrap: anywhere;
-  pointer-events: none;
 }
 
 .shift-pill.nominal-shortened {
@@ -2121,19 +2116,18 @@ body.legend-open {
   padding-inline: 2px;
 }
 
+.schedule-holiday-label,
 .schedule-shortened-label {
-  max-width: 100%;
-  color: inherit;
-  font-size: 8px;
-  line-height: 1.15;
-  text-align: center;
-  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
 }
 
 @media (max-width: 768px) {
   .schedule-holiday-label,
   .schedule-shortened-label {
-    font-size: 7px;
+    font-size: 10px;
   }
 }
 

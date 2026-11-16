@@ -5094,9 +5094,10 @@ th1.appendChild(th1Label);
 
         if (nominal && dayKind === "preholiday") {
           pill.classList.add("nominal-shortened");
-          const label = document.createElement("div");
+          const label = document.createElement("abbr");
           label.className = "schedule-shortened-label";
-          label.append("Сокра", document.createElement("wbr"), "щённый");
+          label.textContent = "С";
+          label.title = "Сокращённый день";
           pill.appendChild(label);
         } else if (shift.specialShortLabel) {
           pill.classList.add("special");
@@ -5136,9 +5137,10 @@ th1.appendChild(th1Label);
       } else {
         td.classList.add("empty-shift");
         if (showNominalSchedule && dayKind === "holiday") {
-          const label = document.createElement("span");
+          const label = document.createElement("abbr");
           label.className = "schedule-holiday-label";
-          label.append("Праз", document.createElement("wbr"), "дник");
+          label.textContent = "П";
+          label.title = "Праздник";
           td.appendChild(label);
         }
       }
