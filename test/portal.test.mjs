@@ -202,3 +202,82 @@ test('подписчик видит сохранение и удаление д�
     events.close();
   }
 });
+
+test('роль 1331872 редактирует смены вне ТП из вкладки ВСЕ', async () => {
+  const db = openDatabase(':memory:');
+  const other = { id: 11, first_name: 'Анна' };
+  const support = { id: 12, first_name: 'Олег' };
+  const supportAssignment = { id: 13, first_name: 'Елена' };
+  const tpDepartmentId = 5;
+  const otherDepartmentId = 6;
+  const date = '2026-11-17T05:00:00Z';
+  const taskFor = (id, employeeId, departmentId) => ({
+    id, form_id: 2470373, fields: [
+      { id: 1, value: { item_id: departmentId } },
+      { id: 2, value: { id: employeeId } },
+      { id: 3, value: date },
+    ],
+  });
+  const tpTask = taskFor(100, supportAssignment.id, tpDepartmentId);
+  const existing = taskFor(101, other.id, otherDepartmentId);
+  const editedExisting = { ...existing, fields: existing.fields.map(field => ({ ...field })) };
+  const writes = [];
+  let granted = true;
+  const pyrus = async (method, path, body) => {
+    if (path === '/v4/members') return { members: [member, other, support, supportAssignment] };
+    if (path === '/v4/contacts') return { organizations: [{ persons: [
+      { id: other.id, department_name: 'Бухгалтерия' },
+    ] }] };
+    if (path === '/v4/roles') return { roles: [
+      { id: 1331872, member_ids: granted ? [member.id] : [] },
+      { id: 1329812, member_ids: [support.id] },
+    ] };
+    if (path === '/v4/catalogs/309670') return { items: [
+      { item_id: tpDepartmentId, values: ['ТП'] },
+      { item_id: otherDepartmentId, values: ['Бухгалтерия'] },
+    ] };
+    if (path === '/v4/forms/2470373/register') return structuredClone({ tasks: [tpTask, existing] });
+    if (path === '/v4/tasks' && method === 'POST' && body.form_id === 2472006) return { task: { id: 900 } };
+    if (path === '/v4/tasks' && method === 'POST') {
+      writes.push(body.fields);
+      return { task: { id: 102, form_id: body.form_id, fields: body.fields } };
+    }
+    if (method === 'GET' && path === '/v4/tasks/100') return { task: tpTask };
+    if (method === 'GET' && path === '/v4/tasks/101') return { task: existing };
+    if (method === 'POST' && path === '/v4/tasks/101/comments') {
+      writes.push(body.field_updates);
+      return { task: editedExisting };
+    }
+    throw new Error('Unexpected API: ' + method + ' ' + path);
+  };
+  const mail = [];
+  const portal = createPortal({
+    db, pyrus, env, sendMail: async message => { mail.push(message); }, mango: async () => {},
+  });
+  await portal.act(request('auth.start', { identifier: member.email }));
+  const code = mail[0].text.match(/Код: (\d{6})/)[1];
+  const login = await portal.act(request('auth.verify', { identifier: member.email, code }));
+  const token = login.body.data.sessionToken;
+  assert.equal(login.body.data.permissions.ALL, 'edit');
+  assert.equal(login.body.data.permissions.TP, 'view');
+
+  const save = (change, task) => portal.act(request('schedule.save', {
+    meta: { line: 'ALL' }, changes: { [change]: { task: [task] } },
+  }, token));
+  const create = employee_id => ({ employee_id, start: date, duration: 480 });
+  assert.equal((await save('create', create(support.id))).status, 403);
+  assert.equal((await save('create', create(supportAssignment.id))).status, 403);
+  assert.equal((await save('create', { ...create(other.id), department_item_id: tpDepartmentId })).status, 403);
+  const forbiddenDelete = await save('deleted', { task_id: tpTask.id });
+  assert.equal(forbiddenDelete.body.data.deleted, 0);
+  assert.equal(writes.length, 0);
+
+  assert.equal((await save('create', create(other.id))).body.data.created, 1);
+  assert.equal(writes[0].find(field => field.id === 1).value.item_id, otherDepartmentId);
+  assert.equal((await save('edit', { ...create(other.id), task_id: existing.id })).body.data.edited, 1);
+  assert.equal(writes[1].some(field => field.id === 1), false);
+
+  granted = false;
+  assert.equal((await save('create', create(other.id))).status, 403);
+  assert.equal(writes.length, 2);
+});

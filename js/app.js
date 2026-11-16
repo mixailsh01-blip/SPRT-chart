@@ -214,8 +214,7 @@ function resolvePermissionsFromRoles(roles) {
     // Обычный сотрудник отдела (роль участника) — правит только свою строку
     else if (hasAny((line.memberRoles || []).map(String))) permissions[line.key] = "self";
   }
-  // "ВСЕ" — сводная вкладка только для просмотра: у каждой смены должно быть подразделение
-  permissions.ALL = "view";
+  if (hasAny([config.auth.permissions.nonTpScheduleEditorRole])) permissions.ALL = "edit";
   return permissions;
 }
 
@@ -415,6 +414,14 @@ function isSelfOnlyLine(line) {
 
 // Можно ли править конкретную строку (сотрудника) во вкладке
 function canEditRow(line, employeeId) {
+  if (line === "ALL") {
+    if (state.auth.permissions.ALL !== "edit") return false;
+    const id = Number(employeeId);
+    const employee = state.employeesByLine.ALL.find(member => Number(member.id) === id);
+    if (!employee || String(employee.departmentName).trim().toUpperCase() === "ТП") return false;
+    return !state.employeesByLine.TP?.some(member => Number(member.id) === id) &&
+      !state.scheduleByLine.TP?.rows?.some(row => Number(row.employeeId) === id);
+  }
   const permission = state.auth.permissions[line] || state.auth.permissions.ALL;
   if (permission === "edit") return true;
   return permission === "self" && isOwnEmployeeId(employeeId);
@@ -968,7 +975,10 @@ async function init() {
         .then((me) => {
           if (me && (me.user || me.roles)) {
             applyAuthResult({ ...me, sessionToken: state.auth.sessionToken });
+            renderQuickTemplateOptions();
+            updateQuickModeForLine();
             updateSaveButtonState();
+            if (state.scheduleByLine[state.ui.currentLine]?.rows.length) renderScheduleCurrentLine();
           }
         })
         .catch((err) => {
@@ -1217,7 +1227,7 @@ function isMobileLayout() {
 }
 
 function linesWithPendingChanges() {
-  return LINE_KEYS.filter((line) => countChangesForLine(line) > 0 && canEditLine(line));
+  return ALL_LINE_KEYS.filter((line) => countChangesForLine(line) > 0 && canEditLine(line));
 }
 
 // Пока открыто окно смены на ПК, правки видны в графике сразу, а в Pyrus уходят при закрытии окна
@@ -2500,9 +2510,8 @@ function renderQuickTemplateOptions() {
   if (!quickTemplateSelectEl) return;
 
   const isAll = state.ui.currentLine === "ALL";
-  // Во вкладке «ВСЕ» нет собственного отдела — обычные шаблоны смен там ничего не решают
-  // (сохранение всё равно заблокировано), показываем только «Отпуск себе» и его удаление.
-  const currentLineTemplates = isAll ? [] : getCurrentLineTemplates();
+  const canEditShifts = canEditLine(state.ui.currentLine);
+  const currentLineTemplates = !isAll || canEditShifts ? getCurrentLineTemplates() : [];
   const prevSelected = state.quickMode.templateId;
 
   quickTemplateSelectEl.innerHTML = "";
@@ -2538,7 +2547,7 @@ function renderQuickTemplateOptions() {
 
   const delOption = document.createElement("option");
   delOption.value = QUICK_DELETE_VALUE;
-  delOption.textContent = isAll ? "🗑 Удалить свой отпуск" : "🗑 Удалить смену / отпуск";
+  delOption.textContent = isAll && !canEditShifts ? "🗑 Удалить свой отпуск" : "🗑 Удалить смену / отпуск";
   quickTemplateSelectEl.appendChild(delOption);
 
   const hasPrev = currentLineTemplates.some((t) => t.id === prevSelected);
@@ -2586,15 +2595,15 @@ function updateQuickModeForLine() {
   const lineLabel = LINE_LABELS[currentLine] || currentLine;
   const isAll = currentLine === "ALL";
   const ownLine = getOwnEditableLineKey();
-  // Во «ВСЕ» обычного редактирования нет — только отпуск себе (см. renderQuickTemplateOptions)
-  const canEdit = isAll ? Boolean(ownLine) : canEditLine(currentLine);
+  const canEditShifts = canEditLine(currentLine);
+  const canEdit = canEditShifts || (isAll && Boolean(ownLine));
   const isCached = state.ui.isScheduleCached;
 
   if (!canEdit && state.quickMode.enabled) {
     state.quickMode.enabled = false;
     updateQuickModeToggleUI();
   }
-  if (isAll && state.quickMode.enabled && !state.quickMode.vacationMode && !state.quickMode.deleteMode) {
+  if (isAll && !canEditShifts && state.quickMode.enabled && !state.quickMode.vacationMode && !state.quickMode.deleteMode) {
     state.quickMode.enabled = false;
     updateQuickModeToggleUI();
   }
@@ -2602,7 +2611,7 @@ function updateQuickModeForLine() {
   if (quickTemplateSelectEl) {
     quickTemplateSelectEl.disabled = !canEdit;
     quickTemplateSelectEl.title = canEdit
-      ? isAll
+      ? isAll && !canEditShifts
         ? "Назначить отпуск самому себе"
         : "Выберите шаблон, чтобы включить быстрое назначение"
       : isCached
@@ -2815,7 +2824,7 @@ function buildPyrusChangesPayload(lineToSave = null) {
     edit: { task: [] },
   };
 
-  const linesToProcess = lineToSave && lineToSave !== "ALL" ? [lineToSave] : LINE_KEYS;
+  const linesToProcess = lineToSave ? [lineToSave] : ALL_LINE_KEYS;
 
   for (const line of linesToProcess) {
     const baseSched = state.originalScheduleByLine[line];
@@ -2863,7 +2872,7 @@ function buildPyrusChangesPayload(lineToSave = null) {
             start: conversion.startUtcIso,
             duration: conversion.durationMinutes,
             amount: Number(currentShift.amount || 0),
-            department_item_id: departmentItemId,
+            ...(line !== "ALL" && { department_item_id: departmentItemId }),
             telephony: currentShift.telephony !== false,
           });
           return;
@@ -2899,7 +2908,7 @@ function buildPyrusChangesPayload(lineToSave = null) {
             start: conversion.startUtcIso,
             duration: conversion.durationMinutes,
             amount: Number(currentShift.amount || 0),
-            department_item_id: departmentItemId,
+            ...(line !== "ALL" && { department_item_id: departmentItemId }),
             telephony: currentShift.telephony !== false,
           });
         }
@@ -2911,8 +2920,8 @@ function buildPyrusChangesPayload(lineToSave = null) {
 }
 
 async function saveLineToPyrus(currentLine) {
-  if (currentLine === "ALL" || !canEditLine(currentLine)) return;
-  if (getDepartmentItemIdForLine(currentLine) == null) {
+  if (!canEditLine(currentLine)) return;
+  if (currentLine !== "ALL" && getDepartmentItemIdForLine(currentLine) == null) {
     throw new Error(`Не найден элемент справочника подразделений для вкладки ${LINE_LABELS[currentLine] || currentLine}`);
   }
 
@@ -3208,21 +3217,14 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
     return;
   }
 
-  // Вкладка «ВСЕ»: обычного редактирования нет, но себе можно назначить отпуск
-  // (см. renderQuickTemplateOptions/updateQuickModeForLine — режим доступен только тогда,
-  // когда отдел определяется однозначно). Чужие строки во «ВСЕ» остаются read-only ниже.
-  if (
-    line === "ALL" &&
-    state.quickMode.enabled &&
-    state.quickMode.vacationMode &&
-    isOwnEmployeeId(row.employeeId) &&
-    getOwnEditableLineKey()
-  ) {
-    handleVacationRangeClick({ line, row, day });
+  if (line === "ALL" && state.quickMode.enabled && state.quickMode.vacationMode) {
+    if (isOwnEmployeeId(row.employeeId) && getOwnEditableLineKey()) {
+      handleVacationRangeClick({ line, row, day });
+    }
     return;
   }
 
-  if (!canEditRow(line, row.employeeId)) {
+  if (!canEditRow(line, row.employeeId) || (line === "ALL" && shift?.lineKey === "TP")) {
     openShiftPopoverReadOnly(
       {
         line,
@@ -3369,7 +3371,7 @@ function describeSwapShift(shift) {
 function canStartSwap(line, employeeId, shift) {
   if (!shift || shift.taskId == null) return false;
   const shiftLine = shift.lineKey || line;
-  return canEditLine(shiftLine) || isOwnEmployeeId(employeeId);
+  return (shiftLine !== "ALL" && canEditLine(shiftLine)) || isOwnEmployeeId(employeeId);
 }
 
 function renderSwapBanner() {
@@ -4484,14 +4486,14 @@ async function reloadScheduleForCurrentMonthInner() {
         ? task.telephony
         : !(telField && (telField.value === "unchecked" || telField.value === false));
 
-    if (!dueField || !personField || !shiftField) continue;
+    if (!dueField || !personField) continue;
 
     const startUtcMs = new Date(dueField.value).getTime();
     if (Number.isNaN(startUtcMs)) continue;
 
     // Pyrus может не вернуть duration у поля «Дата и время смены» —
     // тогда берём длительность из шаблона смены (колонка «Время работы»).
-    const shiftValueForDuration = shiftField.value || {};
+    const shiftValueForDuration = shiftField?.value || {};
     const shiftItemIdForDuration =
       shiftValueForDuration.item_id != null ? shiftValueForDuration.item_id : shiftValueForDuration.id;
     const templateForDuration =
@@ -4519,7 +4521,7 @@ async function reloadScheduleForCurrentMonthInner() {
     const empId = personField.value && personField.value.id;
     if (!empId) continue;
 
-    const shiftCatalog = shiftField.value || {};
+    const shiftCatalog = shiftField?.value || {};
     const shiftItemId = shiftCatalog.item_id != null ? shiftCatalog.item_id : shiftCatalog.id;
 
     // Вкладка смены: поле «Подразделение» в задаче -> отдел сотрудника
@@ -4984,23 +4986,10 @@ th1.appendChild(th1Label);
           birthdayDayThisMonth >= vac.startDay &&
           birthdayDayThisMonth < (vac.endDayExclusive || vac.startDay + 1)
         ) {
-          const b = document.createElement("div");
-          b.className = "birthday-pill birthday-pill-in-vacation";
-          b.textContent = "ДР";
-          const leftPercent = ((birthdayDayThisMonth - vac.startDay) + 0.5) / len * 100;
-          b.style.left = `${leftPercent}%`;
-          b.title = `День рождения: ${formatBirthdayLabel(birthdayDayThisMonth, monthIndex + 1)}`;
-          b.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            openBirthdayPopover(
-              {
-                employeeName: row.employeeName,
-                dateLabel: formatBirthdayLabel(birthdayDayThisMonth, monthIndex + 1),
-              },
-              b
-            );
-          });
-          pill.appendChild(b);
+          const badge = createBirthdayBadge(row.employeeName, birthdayDayThisMonth, monthIndex + 1);
+          badge.classList.add("birthday-pill-in-vacation");
+          badge.style.left = ((birthdayDayThisMonth - dayNumber + 0.5) / len * 100) + "%";
+          pill.appendChild(badge);
         }
 
         td.appendChild(pill);
@@ -5052,21 +5041,7 @@ th1.appendChild(th1Label);
 
       // Маркер дня рождения (один день). Показываем даже если в этот день есть смена.
       if (typeof birthdayDayThisMonth === "number" && birthdayDayThisMonth === dayNumber) {
-        const b = document.createElement("div");
-        b.className = "birthday-pill";
-        b.textContent = "ДР";
-        b.title = `День рождения: ${formatBirthdayLabel(dayNumber, monthIndex + 1)}`;
-        b.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          openBirthdayPopover(
-            {
-              employeeName: row.employeeName,
-              dateLabel: formatBirthdayLabel(dayNumber, monthIndex + 1),
-            },
-            b
-          );
-        });
-        td.appendChild(b);
+        td.appendChild(createBirthdayBadge(row.employeeName, birthdayDayThisMonth, monthIndex + 1));
       }
 
       if (shift) {
@@ -5280,13 +5255,52 @@ function formatBirthdayLabel(day, month) {
   return `${dd}.${mm}`;
 }
 
+function launchBirthdayFirework(anchor) {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  anchor.querySelector(".birthday-firework")?.remove();
+  const burst = document.createElement("span");
+  burst.className = "birthday-firework";
+  burst.setAttribute("aria-hidden", "true");
+  const colors = ["#ffcc52", "#f25d9d", "#49e2ed", "#a98aff"];
+  for (let index = 0; index < 12; index += 1) {
+    const spark = document.createElement("i");
+    const angle = index * Math.PI / 6;
+    const radius = index % 2 === 0 ? 27 : 38;
+    spark.style.setProperty("--spark-x", Math.round(Math.cos(angle) * radius) + "px");
+    spark.style.setProperty("--spark-y", Math.round(Math.sin(angle) * radius) + "px");
+    spark.style.setProperty("--spark-color", colors[index % colors.length]);
+    burst.appendChild(spark);
+  }
+  anchor.appendChild(burst);
+  setTimeout(() => burst.remove(), 800);
+}
+
+function createBirthdayBadge(employeeName, day, month) {
+  const badge = document.createElement("button");
+  badge.type = "button";
+  badge.className = "birthday-pill";
+  badge.textContent = "ДР";
+  const dateLabel = formatBirthdayLabel(day, month);
+  badge.title = "День рождения: " + dateLabel;
+  badge.setAttribute("aria-label", "День рождения — " + employeeName + ", " + dateLabel);
+  badge.addEventListener("pointerenter", event => {
+    if (event.pointerType === "mouse") launchBirthdayFirework(badge);
+  });
+  badge.addEventListener("focus", () => launchBirthdayFirework(badge));
+  badge.addEventListener("click", event => {
+    event.stopPropagation();
+    openBirthdayPopover({ employeeName, dateLabel }, badge);
+  });
+  return badge;
+}
+
 function openBirthdayPopover(context, anchorEl) {
   const { employeeName, dateLabel } = context;
 
   shiftPopoverEl.innerHTML = `
     <div class="shift-popover-header">
       <div>
-        <div class="shift-popover-title">${employeeName}</div>
+        <div class="shift-popover-title birthday-firework-anchor">${employeeName}</div>
         <div class="shift-popover-subtitle">День рождения • только просмотр</div>
       </div>
       <button class="shift-popover-close" type="button">✕</button>
@@ -5322,6 +5336,7 @@ function openBirthdayPopover(context, anchorEl) {
 
   requestAnimationFrame(() => {
     shiftPopoverEl.classList.add("open");
+    launchBirthdayFirework(shiftPopoverEl.querySelector(".shift-popover-title"));
   });
 }
 

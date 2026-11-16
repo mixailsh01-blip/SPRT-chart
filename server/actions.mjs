@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import portalConfig from '../config.json' with { type: 'json' };
 import { findSession } from './sessions.mjs';
 
 function listLunches(lunches, now) {
@@ -39,6 +40,9 @@ const LINES = [
 ];
 const ADMIN_ROLES = [1331784]; // полный админ: все смены, шаблоны смен, выдача ролей
 const EDIT_ALL_ROLES = [...ADMIN_ROLES];
+const NON_TP_EDITOR_ROLE = portalConfig.auth.permissions.nonTpScheduleEditorRole;
+const TP_MEMBER_ROLE = LINES.find(line => line.key === 'TP').memberRoles[0];
+const TP_DEPARTMENT = portalConfig.lines.find(line => line.key === 'TP');
 const SCHEDULE_EDITOR_ROLE = 1329637; // редактор графика ТП
 const HR_ROLE = 1300681; // менеджер по персоналу: согласует отпуска
 const CODE_TTL_MS = 5 * 60 * 1000;
@@ -120,17 +124,39 @@ export async function handleAction({ request, store, telephony, lunches, schedul
     return list;
   }
 
+  async function membersWithDepartments() {
+    // Pyrus включает данные оргструктуры в contacts. Список сотрудников берём из members.
+    const [result, contacts] = await Promise.all([
+      pyrus('GET', '/v4/members'),
+      pyrus('GET', '/v4/contacts').catch(() => null),
+    ]);
+    const departments = new Map((contacts?.organizations || []).flatMap(org => org.persons || [])
+      .filter(person => person.department_id || person.department_name)
+      .map(person => [Number(person.id), person]));
+    return {
+      ...result,
+      members: result.members.map(member => {
+        const contact = departments.get(Number(member.id));
+        return {
+          ...member,
+          department_id: contact?.department_id ?? member.department_id,
+          department_name: contact?.department_name ?? member.department_name,
+        };
+      }),
+    };
+  }
+
   async function rolesOf(memberId) {
     const r = await pyrus('GET', '/v4/roles');
     return (r.roles || [])
-      .filter((role) => !role.banned && (role.member_ids || []).includes(memberId))
+      .filter((role) => !role.banned && (role.member_ids || []).map(Number).includes(Number(memberId)))
       .map((role) => role.id);
   }
 
   function permissionsFor(roles) {
     const ids = (roles || []).map(Number);
     const editAll = EDIT_ALL_ROLES.some((r) => ids.includes(r));
-    const perms = { ALL: 'view' };
+    const perms = { ALL: ids.includes(NON_TP_EDITOR_ROLE) ? 'edit' : 'view' };
     for (const line of LINES) {
       if (editAll || line.editRoles.some((r) => ids.includes(r))) perms[line.key] = 'edit';
       // Обычный сотрудник отдела: правит только свои смены/отпуска
@@ -357,7 +383,9 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       if (method !== 'GET' || !PATH_WHITELIST.some((re) => re.test(path))) {
         return fail(403, 'FORBIDDEN_PATH', `Путь не разрешён: ${method} ${path}`);
       }
-      const data = await pyrus('GET', path);
+      const data = path === '/v4/members' && permissionsFor(session.roles).ALL === 'edit'
+        ? await membersWithDepartments()
+        : await pyrus('GET', path);
       // В реестр графика добавляем флаг телефонии из SQLite
       if (path === SCHEDULE_REGISTER_PATH && data && Array.isArray(data.tasks)) data.tasks.forEach(withTelephony);
       return ok(data);
@@ -370,13 +398,76 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       const edits = changes.edit?.task || [];
       const deletes = changes.deleted?.task || [];
 
-      const lineByItem = await departmentLines();
+      const inAll = p.meta?.line === 'ALL';
       const me = Number(session.memberId);
-      // 'edit' — любые строки отдела; 'self' — только свои (employeeId = текущий пользователь)
-      const canEditItem = (itemId, employeeId) => {
-        const perm = perms[lineByItem[itemId]];
-        return perm === 'edit' || (perm === 'self' && Number(employeeId) === me);
-      };
+      let canEditItem;
+      let departmentForEmployee;
+      if (inAll) {
+        if (perms.ALL !== 'edit') return fail(403, 'FORBIDDEN', 'Нет прав на редактирование вкладки «ВСЕ»');
+        const [membersData, rolesData, catalog, registry] = await Promise.all([
+          membersWithDepartments(),
+          pyrus('GET', '/v4/roles'),
+          pyrus('GET', '/v4/catalogs/' + CAT_DEPARTMENTS),
+          pyrus('GET', SCHEDULE_REGISTER_PATH),
+        ]);
+        const activeRoles = rolesData.roles.filter(role => !role.banned);
+        const editors = activeRoles.find(role => Number(role.id) === NON_TP_EDITOR_ROLE)?.member_ids || [];
+        if (!editors.map(Number).includes(me)) return fail(403, 'FORBIDDEN', 'Нет прав на редактирование вкладки «ВСЕ»');
+
+        const departmentName = value => String(value || '').trim().toUpperCase();
+        const tpName = departmentName(TP_DEPARTMENT.departmentName);
+        const configuredColumn = portalConfig.pyrus.catalogColumns.departments.name;
+        const column = Math.max(0, (catalog.catalog_headers || []).findIndex(header => header.name === configuredColumn));
+        const departmentsByName = new Map(catalog.items.map(item => [departmentName(item.values?.[column]), Number(item.item_id)]));
+        const tpItemId = Number(TP_DEPARTMENT.departmentItemId || departmentsByName.get(tpName));
+        if (!tpItemId) return fail(502, 'BACKEND_ERROR', 'ТП не найдено в справочнике подразделений Pyrus');
+
+        const tpMembers = new Set((activeRoles.find(role => Number(role.id) === TP_MEMBER_ROLE)?.member_ids || []).map(Number));
+        const tpOrgIds = new Set(TP_DEPARTMENT.orgDepartmentIds.map(Number));
+        const employees = new Map(membersData.members
+          .filter(member => !member.banned && (!member.type || member.type === 'user'))
+          .map(member => [Number(member.id), member]));
+        const monthOf = value => {
+          const date = Date.parse(value);
+          return Number.isFinite(date) ? new Date(date + LOCAL_OFFSET_MS).toISOString().slice(0, 7) : '';
+        };
+        const tpAssignments = new Set();
+        const knownDepartments = new Map();
+        const validDepartmentIds = new Set(departmentsByName.values());
+        for (const task of registry.tasks) {
+          const field = id => task.fields?.find(entry => entry.id === id)?.value;
+          const employeeId = Number(field(F.person)?.id);
+          const departmentId = Number(field(F.department)?.item_id);
+          if (departmentId === tpItemId) tpAssignments.add(employeeId + ':' + monthOf(field(F.due)));
+          else if (validDepartmentIds.has(departmentId)) {
+            const assigned = knownDepartments.get(employeeId);
+            const date = Date.parse(field(F.due));
+            if (Number.isFinite(date) && (!assigned || date > assigned.date)) {
+              knownDepartments.set(employeeId, { date, departmentId });
+            }
+          }
+        }
+
+        canEditItem = (itemId, employeeId, date) => {
+          const id = Number(employeeId);
+          const member = employees.get(id);
+          const month = monthOf(date);
+          return Boolean(member && month && Number(itemId) !== tpItemId &&
+            !tpMembers.has(id) && !tpOrgIds.has(Number(member.department_id)) &&
+            departmentName(member.department_name) !== tpName && !tpAssignments.has(id + ':' + month));
+        };
+        departmentForEmployee = employeeId => {
+          const id = Number(employeeId);
+          return departmentsByName.get(departmentName(employees.get(id)?.department_name)) ||
+            knownDepartments.get(id)?.departmentId;
+        };
+      } else {
+        const lineByItem = await departmentLines();
+        canEditItem = (itemId, employeeId) => {
+          const perm = perms[lineByItem[itemId]];
+          return perm === 'edit' || (perm === 'self' && Number(employeeId) === me);
+        };
+      }
 
       async function assertTaskEditable(taskId, newEmployeeId) {
         const t = await pyrus('GET', `/v4/tasks/${taskId}`);
@@ -384,17 +475,23 @@ export async function handleAction({ request, store, telephony, lunches, schedul
         if (task.form_id !== FORM_SCHEDULE) throw Object.assign(new Error('Задача не из формы графика'), { status: 403 });
         const dept = (task.fields || []).find((f) => f.id === F.department);
         const person = Number((task.fields || []).find((f) => f.id === F.person)?.value?.id) || null;
-        if (!canEditItem(dept?.value?.item_id, person)) throw Object.assign(new Error('Нет прав на подразделение задачи'), { status: 403 });
-        if (newEmployeeId !== undefined && !canEditItem(dept?.value?.item_id, newEmployeeId)) throw Object.assign(new Error('Нет прав назначать смену этому сотруднику'), { status: 403 });
+        const date = (task.fields || []).find((f) => f.id === F.due)?.value;
+        if (!canEditItem(dept?.value?.item_id, person, date)) throw Object.assign(new Error('Нет прав на подразделение задачи'), { status: 403 });
+        if (newEmployeeId !== undefined && !canEditItem(dept?.value?.item_id, newEmployeeId, date)) throw Object.assign(new Error('Нет прав назначать смену этому сотруднику'), { status: 403 });
       }
 
-      const fieldsOf = (t) => {
+      const fieldsOf = (t, create = false) => {
         const fields = [
           { id: F.department, value: { item_id: t.department_item_id } },
           { id: F.person, value: { id: t.employee_id } },
           { id: F.due, value: t.start, duration: Number(t.duration) },
           { id: F.amount, value: Number(t.amount || 0) },
         ];
+        if (inAll) {
+          const department = create ? departmentForEmployee(t.employee_id) : undefined;
+          if (department != null) fields[0].value.item_id = department;
+          else fields.shift();
+        }
         // Поле «Смена» — только для смен по шаблону; при ручном вводе времени шаблона нет, поле не трогаем
         if (t.item_id != null && t.item_id !== '') fields.push({ id: F.template, value: { item_id: Number(t.item_id) } });
         // Шаблонная смена стала кастомной (правка): очищаем поле «Смена»
@@ -403,7 +500,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       };
 
       for (const t of [...creates, ...edits]) {
-        if (!canEditItem(t.department_item_id, t.employee_id)) return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого подразделения или сотрудника');
+        if (!canEditItem(t.department_item_id, t.employee_id, t.start)) return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого подразделения или сотрудника');
       }
 
       // Запросы к Pyrus идут параллельно (до CONCURRENCY одновременно), а не по одному
@@ -435,7 +532,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       const jobs = [
         ...creates.map((t) => async () => {
           try {
-            const r = await pyrus('POST', '/v4/tasks', { form_id: FORM_SCHEDULE, fields: fieldsOf(t) });
+            const r = await pyrus('POST', '/v4/tasks', { form_id: FORM_SCHEDULE, fields: fieldsOf(t, true) });
             rememberTask(r && r.task, t.telephony, t.duration);
             result.created++;
           } catch (e) { result.errors.push({ op: 'create', employee_id: t.employee_id, start: t.start, message: errText(e) }); }

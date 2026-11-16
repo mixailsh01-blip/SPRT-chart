@@ -2158,6 +2158,9 @@ body.legend-open {
   top: 3px;
   left: 50%;
   transform: translateX(-50%);
+  border: 0;
+  padding: 0;
+  overflow: visible;
   width: 22px;
   height: 22px;
   border-radius: 999px;
@@ -2181,6 +2184,34 @@ body.legend-open {
   transform: translateX(-50%);
 }
 
+
+.birthday-firework-anchor {
+  position: relative;
+}
+
+.birthday-firework {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.birthday-firework i {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--spark-color);
+  box-shadow: 0 0 5px var(--spark-color);
+  animation: birthday-spark 720ms ease-out both;
+}
+
+@keyframes birthday-spark {
+  0% { transform: translate(0, 0) scale(0.4); opacity: 0; }
+  18% { opacity: 1; }
+  100% { transform: translate(var(--spark-x), var(--spark-y)) scale(0.25); opacity: 0; }
+}
 
 /* Динамические цвета пилюль смен */
 .shift-pill[class*="shift-template-"] {
