@@ -4947,6 +4947,10 @@ th1.appendChild(th1Label);
     templateId: officeTemplate?.id,
   };
 
+  const shortenedNominalShift = computeDurationMinutes(nominalShift.startLocal, nominalShift.endLocal) > 60
+    ? { ...nominalShift, endLocal: addMinutesLocal(parseTimeToMinutes(nominalShift.endLocal), -60).time }
+    : null;
+
   rows.forEach((row) => {
     const tr = document.createElement("tr");
     tr.dataset.employeeId = String(row.employeeId);
@@ -5054,8 +5058,11 @@ th1.appendChild(th1Label);
       }
 
       const savedShift = row.shiftsByDay[dayIndex];
-      const nominal = !savedShift && showNominalSchedule && nominalWorkdays.has(dayNumber);
-      const shift = savedShift || (nominal ? nominalShift : null);
+      const dayKind = dayKindByDay[dayNumber];
+      const nominal = !savedShift && showNominalSchedule && nominalWorkdays.has(dayNumber)
+        ? (dayKind === "preholiday" ? shortenedNominalShift : nominalShift)
+        : null;
+      const shift = savedShift || nominal;
 
       const td = document.createElement("td");
       td.className = "shift-cell";
@@ -5064,7 +5071,6 @@ th1.appendChild(th1Label);
         td.classList.add("vacation-start-pending");
         td.title = "Начало отпуска — кликните последний день";
       }
-      const dayKind = dayKindByDay[dayNumber];
       if (dayKind) {
         td.classList.add(`day-${dayKind}`);
       }
@@ -5140,7 +5146,7 @@ th1.appendChild(th1Label);
           day: clickDay,
           dayIndex: clickDayIndex,
           shift: savedShift || null,
-          nominalShift: nominal ? nominalShift : null,
+          nominalShift: nominal,
           cellEl: td,
         });
       });
