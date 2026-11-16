@@ -1968,13 +1968,13 @@ function createEmployeeFilterPopover() {
 
   employeeFilterPopoverTitleEl = document.createElement("div");
   employeeFilterPopoverTitleEl.className = "employee-filter-header";
-  employeeFilterPopoverTitleEl.textContent = "Сотрудники";
+  employeeFilterPopoverTitleEl.textContent = "Фильтр сотрудников";
 
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.className = "employee-filter-close";
   closeBtn.textContent = "✕";
-  closeBtn.setAttribute("aria-label", "Закрыть список сотрудников");
+  closeBtn.setAttribute("aria-label", "Закрыть фильтр сотрудников");
 
   header.appendChild(employeeFilterPopoverTitleEl);
   header.appendChild(closeBtn);
@@ -2106,49 +2106,8 @@ function openEmployeeFilterPopover({
   employeeFilterPopoverListEl.appendChild(masterLabel);
 
   const itemCheckboxes = [];
-  const entries = new Map();
-  const tableRows = new Map(Array.from(table.querySelectorAll("tbody tr[data-employee-id]"),
-    tr => [Number(tr.dataset.employeeId), tr]));
-
-  const updateMoveButtons = () => {
-    rows.forEach(({ employeeId }, index) => {
-      const { up, down } = entries.get(employeeId);
-      up.disabled = index === 0;
-      down.disabled = index === rows.length - 1;
-    });
-  };
-
-  function moveEmployee(row, direction) {
-    const index = rows.indexOf(row);
-    const targetIndex = index + direction;
-    const neighbor = rows[targetIndex];
-    if (!neighbor) return;
-
-    rows[index] = neighbor;
-    rows[targetIndex] = row;
-    const entry = entries.get(row.employeeId);
-    const targetEntry = entries.get(neighbor.employeeId);
-    const currentTableRow = tableRows.get(row.employeeId);
-    const targetTableRow = tableRows.get(neighbor.employeeId);
-    if (direction < 0) {
-      targetEntry.element.before(entry.element);
-      targetTableRow.before(currentTableRow);
-    } else {
-      targetEntry.element.after(entry.element);
-      targetTableRow.after(currentTableRow);
-    }
-    saveEmployeeOrder(line, rows);
-    updateMoveButtons();
-
-    const active = direction < 0 ? entry.up : entry.down;
-    const opposite = direction < 0 ? entry.down : entry.up;
-    (active.disabled ? opposite : active).focus({ preventScroll: true });
-  }
 
   for (const row of rows) {
-    const element = document.createElement("div");
-    element.className = "employee-filter-entry";
-
     const itemLabel = document.createElement("label");
     itemLabel.className = "employee-filter-item";
 
@@ -2159,29 +2118,12 @@ function openEmployeeFilterPopover({
 
     const name = document.createElement("span");
     name.textContent = row.employeeName;
-    itemLabel.append(checkbox, name);
 
-    const controls = document.createElement("div");
-    controls.className = "employee-order-controls";
-    const up = document.createElement("button");
-    const down = document.createElement("button");
-    for (const [button, direction, glyph, label] of [
-      [up, -1, "↑", "Выше"],
-      [down, 1, "↓", "Ниже"],
-    ]) {
-      button.type = "button";
-      button.textContent = glyph;
-      button.title = label;
-      button.setAttribute("aria-label", label + " по списку — " + row.employeeName);
-      button.addEventListener("click", () => moveEmployee(row, direction));
-    }
-    controls.append(up, down);
-    element.append(itemLabel, controls);
-    employeeFilterPopoverListEl.appendChild(element);
-    entries.set(row.employeeId, { element, up, down });
+    itemLabel.appendChild(checkbox);
+    itemLabel.appendChild(name);
+    employeeFilterPopoverListEl.appendChild(itemLabel);
     itemCheckboxes.push(checkbox);
   }
-  updateMoveButtons();
 
   const updateFilterUI = () => {
     const total = rows.length;
@@ -4122,9 +4064,10 @@ function queueLiveScheduleRefresh() {
 async function refreshLiveSchedule() {
   scheduleRefreshTimer = null;
   if (!stopScheduleEvents || !state.auth.sessionToken) return;
-  const editingOrder = employeeFilterPopoverEl && !employeeFilterPopoverEl.classList.contains("hidden");
+  const employeeFilterOpen = employeeFilterPopoverEl && !employeeFilterPopoverEl.classList.contains("hidden");
   if (autoSave.running || autoSave.timer || autoSaveHeld || state.swap ||
-      shiftPopoverEl?.classList.contains("open") || editingOrder) {
+      shiftPopoverEl?.classList.contains("open") || employeeFilterOpen ||
+      scheduleRootEl?.querySelector(".employee-row-dragging")) {
     scheduleRefreshTimer = setTimeout(refreshLiveSchedule, 350);
     return;
   }
@@ -4696,6 +4639,113 @@ function applyEmployeeFilterToTable(table, hiddenIds, emptyRowEl) {
   }
 }
 
+function bindEmployeeRowReordering(tbody, line, rows) {
+  const byId = new Map(rows.map(row => [row.employeeId, row]));
+  const scrollContainer = scheduleRootEl.closest(".schedule-scroll");
+  const visibleRows = () => Array.from(tbody.querySelectorAll("tr[data-employee-id]:not(.employee-row-hidden)"));
+
+  function persistRows() {
+    const reordered = Array.from(tbody.querySelectorAll("tr[data-employee-id]"),
+      tr => byId.get(Number(tr.dataset.employeeId)));
+    rows.splice(0, rows.length, ...reordered);
+    saveEmployeeOrder(line, rows);
+  }
+
+  for (const grip of tbody.querySelectorAll(".employee-row-grip")) {
+    const source = grip.closest("tr");
+    let drag = null;
+    let frame = 0;
+    let marker = null;
+
+    function clearMarker() {
+      marker?.classList.remove("employee-row-drop-before", "employee-row-drop-after");
+      marker = null;
+    }
+
+    function spot(y) {
+      const candidates = visibleRows().filter(row => row !== source);
+      const next = candidates.find(row => {
+        const rect = row.getBoundingClientRect();
+        return y < rect.top + rect.height / 2;
+      });
+      return { row: next || candidates.at(-1), before: Boolean(next) };
+    }
+
+    function showMarker() {
+      if (!grip.isConnected || !drag?.moving) return;
+      const y = drag.y;
+      const canScrollGrid = scrollContainer &&
+        scrollContainer.scrollHeight > scrollContainer.clientHeight + 2 &&
+        ["auto", "scroll"].includes(getComputedStyle(scrollContainer).overflowY);
+      const bounds = canScrollGrid ? scrollContainer.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      const top = Math.max(0, bounds.top);
+      const bottom = Math.min(window.innerHeight, bounds.bottom);
+      const scroll = y < top + 30 ? -10 : y > bottom - 30 ? 10 : 0;
+      if (scroll) {
+        if (canScrollGrid) scrollContainer.scrollTop += scroll;
+        else window.scrollBy(0, scroll);
+      }
+      const position = spot(y);
+      clearMarker();
+      marker = position.row;
+      marker?.classList.add(position.before ? "employee-row-drop-before" : "employee-row-drop-after");
+      frame = requestAnimationFrame(showMarker);
+    }
+
+    function finish(event, drop) {
+      if (drag?.id !== event.pointerId) return;
+      const moving = drag.moving;
+      drag = null;
+      cancelAnimationFrame(frame);
+      source.classList.remove("employee-row-dragging");
+      clearMarker();
+      if (grip.hasPointerCapture(event.pointerId)) grip.releasePointerCapture(event.pointerId);
+      if (!drop || !moving) return;
+
+      const { row, before } = spot(event.clientY);
+      const visible = visibleRows();
+      const index = visible.indexOf(source);
+      if (!row || (before ? visible[index + 1] : visible[index - 1]) === row) return;
+      if (before) row.before(source);
+      else row.after(source);
+      persistRows();
+    }
+
+    grip.addEventListener("pointerdown", event => {
+      if (!event.isPrimary || event.button !== 0) return;
+      drag = { id: event.pointerId, startY: event.clientY, y: event.clientY, moving: false };
+      grip.setPointerCapture(event.pointerId);
+    });
+
+    grip.addEventListener("pointermove", event => {
+      if (drag?.id !== event.pointerId) return;
+      drag.y = event.clientY;
+      if (!drag.moving && Math.abs(drag.y - drag.startY) >= 5) {
+        drag.moving = true;
+        source.classList.add("employee-row-dragging");
+        frame = requestAnimationFrame(showMarker);
+      }
+    });
+
+    grip.addEventListener("pointerup", event => finish(event, true));
+    grip.addEventListener("pointercancel", event => finish(event, false));
+    grip.addEventListener("lostpointercapture", event => finish(event, false));
+    grip.addEventListener("keydown", event => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      event.preventDefault();
+      const direction = event.key === "ArrowUp" ? -1 : 1;
+      const visible = visibleRows();
+      const neighbor = visible[visible.indexOf(source) + direction];
+      if (!neighbor) return;
+      if (direction < 0) neighbor.before(source);
+      else neighbor.after(source);
+      persistRows();
+      grip.focus({ preventScroll: true });
+      grip.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  }
+}
+
 function renderScheduleCurrentLine() {
   closeEmployeeFilterPopover();
   const line = state.ui.currentLine;
@@ -4738,8 +4788,7 @@ function renderScheduleCurrentLine() {
   const filterBtn = document.createElement("button");
   filterBtn.type = "button";
   filterBtn.className = "employee-filter-btn";
-  filterBtn.setAttribute("aria-label", "Видимость и порядок сотрудников");
-  filterBtn.title = "Видимость и порядок сотрудников";
+  filterBtn.setAttribute("aria-label", "Фильтр сотрудников");
   filterBtn.innerHTML =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v5l-4 2v-7z"></path></svg>';
   if (hiddenEmployeeIds.size > 0) filterBtn.classList.add("active");
@@ -4876,7 +4925,16 @@ th1.appendChild(th1Label);
 
     const tdName = document.createElement("td");
     tdName.className = "sticky-col employee-name";
-    tdName.textContent = row.employeeName;
+    if (rows.length > 1) {
+      const grip = document.createElement("button");
+      grip.type = "button";
+      grip.className = "employee-row-grip";
+      grip.title = "Перетащить строку";
+      grip.setAttribute("aria-label", "Переместить строку — " + row.employeeName);
+      grip.setAttribute("aria-keyshortcuts", "ArrowUp ArrowDown");
+      tdName.appendChild(grip);
+    }
+    tdName.append(row.employeeName);
     decorateLunchBadge(tdName, row.employeeId);
     tr.appendChild(tdName);
 
@@ -5110,6 +5168,7 @@ th1.appendChild(th1Label);
   table.appendChild(tbody);
   scheduleRootEl.innerHTML = "";
   scheduleRootEl.appendChild(table);
+  bindEmployeeRowReordering(tbody, line, rows);
   updateFilterButtonState();
   applyEmployeeFilterToTable(table, hiddenEmployeeIds, emptyRow);
 }

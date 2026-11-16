@@ -1538,6 +1538,48 @@ body.legend-open {
   white-space: nowrap;
 }
 
+.employee-row-grip {
+  width: 24px;
+  min-height: 24px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 15px;
+  vertical-align: middle;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.employee-row-grip::before {
+  content: "⠿";
+}
+
+.employee-row-grip:hover,
+.employee-row-grip:focus-visible {
+  color: var(--text);
+  background: var(--button-bg-hover);
+}
+
+.schedule-table tr.employee-row-dragging {
+  opacity: 0.5;
+}
+
+.employee-row-dragging .employee-row-grip {
+  cursor: grabbing;
+}
+
+.schedule-table tr.employee-row-drop-before > td {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.schedule-table tr.employee-row-drop-after > td {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
 .schedule-table .employee-header-cell {
   min-width: 200px;
 }
@@ -1659,45 +1701,6 @@ body.legend-open {
   gap: 8px;
   font-size: 12px;
   cursor: pointer;
-}
-
-.employee-filter-entry {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.employee-filter-entry .employee-filter-item {
-  min-width: 0;
-  flex: 1;
-}
-
-.employee-order-controls {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 4px;
-}
-
-.employee-order-controls button {
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--button-bg);
-  color: var(--text);
-  font-size: 17px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.employee-order-controls button:hover:not(:disabled) {
-  background: var(--button-bg-hover);
-}
-
-.employee-order-controls button:disabled {
-  opacity: 0.35;
-  cursor: default;
 }
 
 .employee-filter-item input {
