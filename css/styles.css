@@ -2097,15 +2097,41 @@ body.legend-open {
 
 .schedule-holiday-label {
   display: inline-block;
-  color: var(--text-muted);
+  align-content: center;
+  box-sizing: border-box;
+  width: calc(var(--cell-size) - 6px);
+  min-height: 28px;
+  padding: 2px 1px;
+  border: 1px solid var(--calendar-holiday-border);
+  border-radius: 10px;
+  background: var(--bg-alt);
+  background: color-mix(in srgb, var(--bg-alt) 55%, var(--calendar-holiday-bg));
+  color: var(--text);
   font-size: 9px;
+  font-weight: 600;
   line-height: 1.2;
-  white-space: nowrap;
+  text-align: center;
+  overflow-wrap: anywhere;
   pointer-events: none;
 }
 
+.schedule-shortened-label {
+  max-width: 100%;
+  margin-top: 2px;
+  color: inherit;
+  font-size: 8px;
+  line-height: 1.15;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 768px) {
-  .schedule-holiday-label {
+  .shift-pill.nominal-shortened {
+    padding-inline: 2px;
+  }
+
+  .schedule-holiday-label,
+  .schedule-shortened-label {
     font-size: 7px;
   }
 }

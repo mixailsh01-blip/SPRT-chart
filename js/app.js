@@ -5110,6 +5110,13 @@ th1.appendChild(th1Label);
           pill.appendChild(line1);
           pill.appendChild(line2);
         }
+        if (nominal && dayKind === "preholiday") {
+          pill.classList.add("nominal-shortened");
+          const label = document.createElement("div");
+          label.className = "schedule-shortened-label";
+          label.append("Сокра", document.createElement("wbr"), "щённый");
+          pill.appendChild(label);
+        }
         if (!nominal) {
           // Индикатор телефонии: зелёная точка — в телефонии, красная — нет (например, выезд)
           const telDot = document.createElement("span");
@@ -5132,7 +5139,7 @@ th1.appendChild(th1Label);
         if (showNominalSchedule && dayKind === "holiday") {
           const label = document.createElement("span");
           label.className = "schedule-holiday-label";
-          label.textContent = "Праздник";
+          label.append("Праз", document.createElement("wbr"), "дник");
           td.appendChild(label);
         }
       }
