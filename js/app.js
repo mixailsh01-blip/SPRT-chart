@@ -3093,8 +3093,9 @@ async function refreshVacationsForCurrentMonth() {
 // Пока выбран первый день отпуска, при движении мыши подсвечиваем весь период до курсора
 function previewVacationRange(tr, line, employeeId, hoverDay) {
   const vs = state.quickMode.vacationStart;
-  document.querySelectorAll("td.vacation-preview").forEach((c) => c.classList.remove("vacation-preview"));
-  if (!vs || vs.line !== line || vs.employeeId !== employeeId) return;
+  if (!vs) return;
+  scheduleRootEl.querySelectorAll("td.vacation-preview").forEach(cell => cell.classList.remove("vacation-preview"));
+  if (vs.line !== line || vs.employeeId !== employeeId) return;
   const from = Math.min(vs.day, hoverDay);
   const to = Math.max(vs.day, hoverDay);
   tr.querySelectorAll("td[data-day]").forEach((c) => {
@@ -4760,6 +4761,7 @@ function bindEmployeeRowReordering(tbody, line, rows) {
 }
 
 function renderScheduleCurrentLine() {
+  birthdayObserver?.disconnect();
   closeEmployeeFilterPopover();
   const line = state.ui.currentLine;
   const sched = state.scheduleByLine[line];
@@ -5006,7 +5008,8 @@ th1.appendChild(th1Label);
           birthdayDayThisMonth >= vac.startDay &&
           birthdayDayThisMonth < (vac.endDayExclusive || vac.startDay + 1)
         ) {
-          const badge = createBirthdayBadge(row.employeeName, birthdayDayThisMonth, monthIndex + 1);
+          const badge = createBirthdayBadge(row, birthdayDayThisMonth, year, monthIndex + 1);
+          td.classList.add("birthday-cell");
           badge.classList.add("birthday-pill-in-vacation");
           badge.style.left = ((birthdayDayThisMonth - dayNumber + 0.5) / len * 100) + "%";
           pill.appendChild(badge);
@@ -5064,7 +5067,8 @@ th1.appendChild(th1Label);
 
       // Маркер дня рождения (один день). Показываем даже если в этот день есть смена.
       if (typeof birthdayDayThisMonth === "number" && birthdayDayThisMonth === dayNumber) {
-        td.appendChild(createBirthdayBadge(row.employeeName, birthdayDayThisMonth, monthIndex + 1));
+        td.classList.add("birthday-cell");
+        td.appendChild(createBirthdayBadge(row, birthdayDayThisMonth, year, monthIndex + 1));
       }
 
       if (shift) {
@@ -5170,6 +5174,7 @@ th1.appendChild(th1Label);
   table.appendChild(tbody);
   scheduleRootEl.innerHTML = "";
   scheduleRootEl.appendChild(table);
+  observeBirthdayBadges(table);
   bindEmployeeRowReordering(tbody, line, rows);
   updateFilterButtonState();
   applyEmployeeFilterToTable(table, hiddenEmployeeIds, emptyRow);
@@ -5282,38 +5287,59 @@ function formatBirthdayLabel(day, month) {
   return `${dd}.${mm}`;
 }
 
-function launchBirthdayFirework(anchor, { repeat = false } = {}) {
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  anchor.querySelector(".birthday-firework")?.remove();
+const seenBirthdayCelebrations = new Set();
+let birthdayObserver;
+
+function observeBirthdayBadges(table) {
+  const badges = table.querySelectorAll(".birthday-pill");
+  if (!badges.length) return;
+
+  function setVisible(badge, visible) {
+    badge.classList.toggle("birthday-in-view", visible);
+    const key = badge.dataset.birthday;
+    if (!visible || state.ui.isScheduleCached || seenBirthdayCelebrations.has(key) ||
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    seenBirthdayCelebrations.add(key);
+    badge.classList.add("birthday-intro");
+    badge.querySelector(".birthday-face").addEventListener("animationend", () => {
+      badge.classList.remove("birthday-intro");
+    }, { once: true });
+  }
+
+  if (!("IntersectionObserver" in window)) {
+    badges.forEach(badge => setVisible(badge, true));
+    return;
+  }
+  birthdayObserver ||= new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (entry.target.isConnected) setVisible(entry.target, entry.isIntersecting && entry.intersectionRatio > 0);
+    }
+  }, { threshold: 0.01 });
+  badges.forEach(badge => birthdayObserver.observe(badge));
+}
+
+function createBirthdayFirework() {
   const burst = document.createElement("span");
   burst.className = "birthday-firework";
   burst.setAttribute("aria-hidden", "true");
-  const colors = ["#ffcc52", "#f25d9d", "#49e2ed", "#a98aff"];
-  for (let index = 0; index < 12; index += 1) {
-    const spark = document.createElement("i");
-    const angle = index * Math.PI / 6;
-    const radius = index % 2 === 0 ? 27 : 38;
-    spark.style.setProperty("--spark-x", Math.round(Math.cos(angle) * radius) + "px");
-    spark.style.setProperty("--spark-y", Math.round(Math.sin(angle) * radius) + "px");
-    spark.style.setProperty("--spark-color", colors[index % colors.length]);
-    burst.appendChild(spark);
-  }
-  anchor.appendChild(burst);
-  if (!repeat) setTimeout(() => burst.remove(), 800);
+  return burst;
 }
 
-function createBirthdayBadge(employeeName, day, month) {
+function createBirthdayBadge(row, day, year, month) {
   const badge = document.createElement("button");
   badge.type = "button";
   badge.className = "birthday-pill";
-  badge.textContent = "ДР";
+  badge.dataset.birthday = [row.employeeId, year, month, day].join("-");
+  const face = document.createElement("span");
+  face.className = "birthday-face";
+  face.textContent = "ДР";
+  badge.append(face, createBirthdayFirework());
   const dateLabel = formatBirthdayLabel(day, month);
   badge.title = "День рождения: " + dateLabel;
-  badge.setAttribute("aria-label", "День рождения — " + employeeName + ", " + dateLabel);
-  launchBirthdayFirework(badge, { repeat: true });
+  badge.setAttribute("aria-label", "День рождения — " + row.employeeName + ", " + dateLabel);
   badge.addEventListener("click", event => {
     event.stopPropagation();
-    openBirthdayPopover({ employeeName, dateLabel }, badge);
+    openBirthdayPopover({ employeeName: row.employeeName, dateLabel }, badge);
   });
   return badge;
 }
@@ -5360,7 +5386,9 @@ function openBirthdayPopover(context, anchorEl) {
 
   requestAnimationFrame(() => {
     shiftPopoverEl.classList.add("open");
-    launchBirthdayFirework(shiftPopoverEl.querySelector(".shift-popover-title"));
+    const burst = createBirthdayFirework();
+    burst.classList.add("birthday-firework-once");
+    shiftPopoverEl.querySelector(".shift-popover-title").appendChild(burst);
   });
 }
 
