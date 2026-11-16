@@ -790,16 +790,28 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       if (!Number.isFinite(amount) || amount < 0 || amount > 1000000) return fail(400, 'BAD_REQUEST', 'Некорректная сумма');
 
       const sc = await shiftsCatalog();
-      if (sc.idx.name !== 0) return fail(502, 'BACKEND_ERROR', 'Название смены должно быть первой колонкой справочника');
+      const nameOf = item => String(item.values?.[sc.idx.name] ?? '').trim();
+      const matchingNames = itemId == null
+        ? sc.items.filter(item => nameOf(item).toUpperCase() === name.toUpperCase())
+        : [];
+      if (matchingNames.length > 1) {
+        return fail(409, 'AMBIGUOUS_TEMPLATE', 'Найдено несколько шаблонов с таким названием. Выберите нужный в списке.');
+      }
       const existing = itemId != null
         ? sc.items.find(item => Number(item.item_id) === itemId)
-        : sc.items.find(item => String(item.values?.[0] ?? '').trim().toUpperCase() === name.toUpperCase());
+        : matchingNames[0];
       if (itemId != null && !existing) return fail(404, 'NOT_FOUND', 'Шаблон не найден');
+      if (!existing && sc.idx.name !== 0) {
+        return fail(502, 'BACKEND_ERROR', 'Для нового шаблона укажите отдельный ключ в справочнике Pyrus');
+      }
+      if (existing && !String(existing.values?.[0] ?? '').trim()) {
+        return fail(502, 'BACKEND_ERROR', 'У шаблона пустой ключ в первой колонке справочника Pyrus');
+      }
       const previousDept = String(existing?.values?.[sc.idx.dept] ?? '');
       if (existing && !canManageTemplate(session.roles, previousDept)) {
         return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого шаблона');
       }
-      if (itemId != null && name !== String(existing.values[0]).trim()) {
+      if (itemId != null && name !== nameOf(existing)) {
         return fail(409, 'TEMPLATE_CHANGED', 'Название шаблона изменилось в Pyrus. Обновите список и повторите.');
       }
 
@@ -812,15 +824,15 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       if (sc.idx.dept < 0) return fail(502, 'BACKEND_ERROR', 'В справочнике смен нет колонки «Отдел»');
 
       const values = sc.headers.map((_, index) => String(existing?.values?.[index] ?? ''));
-      values[0] = existing ? values[0] : name;
+      if (!existing) values[sc.idx.name] = name;
       if (sc.idx.time >= 0) values[sc.idx.time] = time.replace(/\s+/g, '');
       if (sc.idx.amount >= 0) values[sc.idx.amount] = String(amount);
       values[sc.idx.dept] = knownDept ? dept : previousDept;
       if (existing && values.every((value, index) => value === String(existing.values?.[index] ?? ''))) {
-        return ok({ saved: values[0] });
+        return ok({ saved: values[sc.idx.name] });
       }
       await pyrus('POST', '/v4/catalogs/' + CAT_SHIFTS + '/diff', { upsert: [{ values }] });
-      return ok({ saved: values[0] });
+      return ok({ saved: values[sc.idx.name] });
     }
 
     if (action === 'settings.shift.delete') {

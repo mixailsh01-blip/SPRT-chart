@@ -351,12 +351,12 @@ test('роль 1331872 может добавлять, переносить и у
   assert.equal(writes.length, 2);
 });
 
-test('администратор меняет доступ шаблона, сохраняя его ключ и остальные колонки', async () => {
+test('администратор меняет доступ шаблона, когда название и ключ в разных колонках', async () => {
   const db = openDatabase(':memory:');
   const editor = { id: 11, email: 'editor@example.test' };
   const items = [
-    { item_id: 100, values: ['СМЕНА 5/2', '9:00-18:00', '0', 'ТП', 'Доп. значение'] },
-    { item_id: 101, values: ['СМЕНА 2/2', '9:00-21:00', '0', 'ТП', 'Другая строка'] },
+    { item_id: 100, values: ['shift-5-2', 'СМЕНА 5/2', '09:00-18:00', '0', 'ТП', 'Доп. значение'] },
+    { item_id: 101, values: ['shift-2-2', 'СМЕНА 2/2', '9:00-21:00', '0', 'ТП', 'Другая строка'] },
   ];
   const writes = [];
   const pyrus = async (method, path, body) => {
@@ -367,7 +367,7 @@ test('администратор меняет доступ шаблона, со�
     if (path === '/v4/tasks' && method === 'POST' && body.form_id === 2472006) return { task: { id: 900 } };
     if (path === '/v4/catalogs/309671' && method === 'GET') {
       return {
-        catalog_headers: ['Названия смен', 'Время работы', 'Сумма за смену', 'Отдел', 'Дополнительно']
+        catalog_headers: ['Код', 'Названия смен', 'Время работы', 'Сумма за смену', 'Отдел', 'Дополнительно']
           .map(name => ({ name })),
         items: structuredClone(items),
       };
@@ -394,8 +394,10 @@ test('администратор меняет доступ шаблона, со�
   const change = { item_id: 100, name: 'СМЕНА 5/2', time: '09:00-18:00', amount: 0, dept: 'ВСЕ' };
   assert.equal((await portal.act(request('settings.shift.save', change, editorToken))).status, 403);
   assert.equal((await portal.act(request('settings.shift.save', { ...change, name: 'другой ключ' }, adminToken))).status, 409);
-  assert.equal((await portal.act(request('settings.shift.save', change, adminToken))).status, 200);
+  const result = await portal.act(request('settings.shift.save', change, adminToken));
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.saved, 'СМЕНА 5/2');
   assert.deepEqual(writes, [{
-    upsert: [{ values: ['СМЕНА 5/2', '09:00-18:00', '0', 'ВСЕ', 'Доп. значение'] }],
+    upsert: [{ values: ['shift-5-2', 'СМЕНА 5/2', '09:00-18:00', '0', 'ВСЕ', 'Доп. значение'] }],
   }]);
 });
