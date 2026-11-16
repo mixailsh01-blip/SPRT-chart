@@ -4840,6 +4840,7 @@ function renderScheduleCurrentLine() {
   const { year, monthIndex } = state.monthMeta;
   const monthKey = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
   const dayKindByDay = Object.create(null);
+  const nominalWorkdays = new Set();
 
   let prod = state.prodCalendar && state.prodCalendar.monthKey === monthKey ? state.prodCalendar : null;
   if (!prod) {
@@ -4875,6 +4876,10 @@ function renderScheduleCurrentLine() {
                       ? "preholiday"
                       : "workday")
               : null;
+
+    if (weekday !== "Сб" && weekday !== "Вс" && (dayKind === "workday" || dayKind === "preholiday")) {
+      nominalWorkdays.add(day);
+    }
 
     const th1 = document.createElement("th");
 const th1Label = document.createElement("span");
@@ -5049,8 +5054,7 @@ th1.appendChild(th1Label);
       }
 
       const savedShift = row.shiftsByDay[dayIndex];
-      const weekDay = new Date(year, monthIndex, dayNumber).getDay();
-      const nominal = !savedShift && showNominalSchedule && weekDay >= 1 && weekDay <= 5;
+      const nominal = !savedShift && showNominalSchedule && nominalWorkdays.has(dayNumber);
       const shift = savedShift || (nominal ? nominalShift : null);
 
       const td = document.createElement("td");
@@ -5119,6 +5123,12 @@ th1.appendChild(th1Label);
         totalShifts += 1;
       } else {
         td.classList.add("empty-shift");
+        if (showNominalSchedule && dayKind === "holiday") {
+          const label = document.createElement("span");
+          label.className = "schedule-holiday-label";
+          label.textContent = "Праздник";
+          td.appendChild(label);
+        }
       }
 
       const clickDay = dayNumber;
