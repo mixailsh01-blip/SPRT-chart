@@ -5087,12 +5087,12 @@ th1.appendChild(th1Label);
         pill.className = nominal ? "shift-pill nominal-shift" : "shift-pill";
         if (nominal) pill.title = "Номинальная смена 5/2, без телефонии";
 
-        // Применение цвета к pill
-        if (typeof ShiftColors !== 'undefined' && ShiftColors.applyColorToPill && shift.templateId) {
+        const shortened = Boolean(nominal && dayKind === "preholiday");
+        if (!shortened && typeof ShiftColors !== 'undefined' && ShiftColors.applyColorToPill && shift.templateId) {
           ShiftColors.applyColorToPill(pill, shift.templateId, line);
         }
 
-        if (nominal && dayKind === "preholiday") {
+        if (shortened) {
           pill.classList.add("nominal-shortened");
           const label = document.createElement("abbr");
           label.className = "schedule-shortened-label";

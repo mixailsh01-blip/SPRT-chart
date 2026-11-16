@@ -2114,6 +2114,10 @@ body.legend-open {
   justify-content: center;
   min-height: 28px;
   padding-inline: 2px;
+  background: var(--sprt-preholiday);
+  border-color: var(--sprt-preholiday);
+  color: var(--sprt-navy);
+  text-shadow: none;
 }
 
 .schedule-holiday-label,
@@ -3574,6 +3578,7 @@ body.line-tabs-open{
   --sprt-cyan: #1CDBE5;
   --sprt-red: #E02B3D;
   --sprt-navy: #073E59;
+  --sprt-preholiday: #E6BE3C;
   --sprt-white: #FFFFFF;
   --sprt-black: #000000;
 
@@ -3694,7 +3699,7 @@ input, select, button, textarea { font-family: inherit; }
 :root[data-theme="light"] .schedule-table thead th.day-workday { background: var(--sprt-navy); }
 :root[data-theme="light"] .schedule-table thead th.day-weekend { background: #4E6B7A; }
 :root[data-theme="light"] .schedule-table thead th.day-holiday { background: var(--sprt-red); }
-:root[data-theme="light"] .schedule-table thead th.day-preholiday { background: #E6BE3C; color: var(--sprt-navy); }
+:root[data-theme="light"] .schedule-table thead th.day-preholiday { background: var(--sprt-preholiday); color: var(--sprt-navy); }
 
 /* ===== Читаемость сетки графика =====
    Раньше ячейки, границы и строки были почти одного цвета и сливались. */
@@ -3750,11 +3755,11 @@ body.dark-theme {
 }
 .day-legend-swatch.weekend { background: var(--calendar-weekend-bg); }
 .day-legend-swatch.holiday { background: var(--sprt-red); border-color: var(--sprt-red); }
-.day-legend-swatch.preholiday { background: #E6BE3C; border-color: #E6BE3C; }
+.day-legend-swatch.preholiday { background: var(--sprt-preholiday); border-color: var(--sprt-preholiday); }
 
 /* Сокращённый день: заголовок — сплошной жёлтый (полупрозрачный жёлтый на синем выглядит зелёным) */
 .schedule-table thead th.day-preholiday {
-  background: #E6BE3C;
+  background: var(--sprt-preholiday);
   color: var(--sprt-navy);
 }
 .schedule-table thead th.day-holiday {
