@@ -1661,6 +1661,45 @@ body.legend-open {
   cursor: pointer;
 }
 
+.employee-filter-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.employee-filter-entry .employee-filter-item {
+  min-width: 0;
+  flex: 1;
+}
+
+.employee-order-controls {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.employee-order-controls button {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--button-bg);
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.employee-order-controls button:hover:not(:disabled) {
+  background: var(--button-bg-hover);
+}
+
+.employee-order-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .employee-filter-item input {
   accent-color: var(--danger);
 }

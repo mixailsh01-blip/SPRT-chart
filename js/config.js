@@ -56,6 +56,7 @@ const DEFAULT_CONFIG = {
       theme: "sprt_theme_preference",
       currentLine: "sprt_current_line",
       employeeFilters: "sprt_employee_filters",
+      employeeRowOrder: "sprt_employee_row_order",
       cachedEmployees: "sprt_cached_employees",
       cachedShiftTemplates: "sprt_cached_shift_templates",
       cachedSchedulePrefix: "sprt_cached_schedule_",

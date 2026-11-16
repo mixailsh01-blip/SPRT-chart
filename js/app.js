@@ -2,7 +2,7 @@
 // Главный модуль SPA «График смен» (SPRT-chart)
 // Чистый vanilla JS.
 
-import { config, getConfigValue } from "./config.js?v=9";
+import { config, getConfigValue } from "./config.js?v=10";
 import { createApiClient } from "./api/apiClient.js?v=5";
 import { listenForScheduleChanges } from "./api/scheduleEvents.js";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
@@ -261,6 +261,7 @@ const state = {
   },
   vacationsByEmployee: {},
   employeeFiltersByLine: makeByLine(() => []),
+  employeeOrderByLine: makeByLine(() => []),
   swap: null, // обмен сменами: выбранная первая смена { line, employeeId, employeeName, day, year, monthIndex, shift }
 };
 
@@ -938,6 +939,7 @@ async function init() {
   initTheme();
   loadCurrentLinePreference();
   loadEmployeeFilters();
+  loadEmployeeOrder();
   if (!loadCurrentMonthPreference()) initMonthMetaToToday();
   // Прогрев производственного календаря до авторизации и загрузки графика
   prodCalendarService
@@ -1924,6 +1926,34 @@ function setHiddenEmployeeIds(line, ids) {
   persistEmployeeFilters();
 }
 
+function loadEmployeeOrder() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEYS.employeeRowOrder) || "{}");
+    for (const line of ALL_LINE_KEYS) {
+      if (Array.isArray(saved?.[line])) {
+        state.employeeOrderByLine[line] = [...new Set(saved[line].filter(Number.isSafeInteger))];
+      }
+    }
+  } catch (err) {
+    console.warn("Не удалось загрузить порядок сотрудников", err);
+  }
+}
+
+function saveEmployeeOrder(line, rows) {
+  const ids = rows.map(row => row.employeeId);
+  const present = new Set(ids);
+  let index = 0;
+  // Сохраняем позиции сотрудников, которых нет в выбранном месяце.
+  const previous = state.employeeOrderByLine[line];
+  const order = previous.map(id => present.has(id) ? ids[index++] : id);
+  state.employeeOrderByLine[line] = [...order, ...ids.slice(index)];
+  try {
+    localStorage.setItem(STORAGE_KEYS.employeeRowOrder, JSON.stringify(state.employeeOrderByLine));
+  } catch (err) {
+    console.warn("Не удалось сохранить порядок сотрудников", err);
+  }
+}
+
 function createEmployeeFilterPopover() {
   if (employeeFilterPopoverEl) return;
 
@@ -1938,13 +1968,13 @@ function createEmployeeFilterPopover() {
 
   employeeFilterPopoverTitleEl = document.createElement("div");
   employeeFilterPopoverTitleEl.className = "employee-filter-header";
-  employeeFilterPopoverTitleEl.textContent = "Фильтр сотрудников";
+  employeeFilterPopoverTitleEl.textContent = "Сотрудники";
 
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.className = "employee-filter-close";
   closeBtn.textContent = "✕";
-  closeBtn.setAttribute("aria-label", "Закрыть фильтр сотрудников");
+  closeBtn.setAttribute("aria-label", "Закрыть список сотрудников");
 
   header.appendChild(employeeFilterPopoverTitleEl);
   header.appendChild(closeBtn);
@@ -2076,8 +2106,49 @@ function openEmployeeFilterPopover({
   employeeFilterPopoverListEl.appendChild(masterLabel);
 
   const itemCheckboxes = [];
+  const entries = new Map();
+  const tableRows = new Map(Array.from(table.querySelectorAll("tbody tr[data-employee-id]"),
+    tr => [Number(tr.dataset.employeeId), tr]));
+
+  const updateMoveButtons = () => {
+    rows.forEach(({ employeeId }, index) => {
+      const { up, down } = entries.get(employeeId);
+      up.disabled = index === 0;
+      down.disabled = index === rows.length - 1;
+    });
+  };
+
+  function moveEmployee(row, direction) {
+    const index = rows.indexOf(row);
+    const targetIndex = index + direction;
+    const neighbor = rows[targetIndex];
+    if (!neighbor) return;
+
+    rows[index] = neighbor;
+    rows[targetIndex] = row;
+    const entry = entries.get(row.employeeId);
+    const targetEntry = entries.get(neighbor.employeeId);
+    const currentTableRow = tableRows.get(row.employeeId);
+    const targetTableRow = tableRows.get(neighbor.employeeId);
+    if (direction < 0) {
+      targetEntry.element.before(entry.element);
+      targetTableRow.before(currentTableRow);
+    } else {
+      targetEntry.element.after(entry.element);
+      targetTableRow.after(currentTableRow);
+    }
+    saveEmployeeOrder(line, rows);
+    updateMoveButtons();
+
+    const active = direction < 0 ? entry.up : entry.down;
+    const opposite = direction < 0 ? entry.down : entry.up;
+    (active.disabled ? opposite : active).focus({ preventScroll: true });
+  }
 
   for (const row of rows) {
+    const element = document.createElement("div");
+    element.className = "employee-filter-entry";
+
     const itemLabel = document.createElement("label");
     itemLabel.className = "employee-filter-item";
 
@@ -2088,12 +2159,29 @@ function openEmployeeFilterPopover({
 
     const name = document.createElement("span");
     name.textContent = row.employeeName;
+    itemLabel.append(checkbox, name);
 
-    itemLabel.appendChild(checkbox);
-    itemLabel.appendChild(name);
-    employeeFilterPopoverListEl.appendChild(itemLabel);
+    const controls = document.createElement("div");
+    controls.className = "employee-order-controls";
+    const up = document.createElement("button");
+    const down = document.createElement("button");
+    for (const [button, direction, glyph, label] of [
+      [up, -1, "↑", "Выше"],
+      [down, 1, "↓", "Ниже"],
+    ]) {
+      button.type = "button";
+      button.textContent = glyph;
+      button.title = label;
+      button.setAttribute("aria-label", label + " по списку — " + row.employeeName);
+      button.addEventListener("click", () => moveEmployee(row, direction));
+    }
+    controls.append(up, down);
+    element.append(itemLabel, controls);
+    employeeFilterPopoverListEl.appendChild(element);
+    entries.set(row.employeeId, { element, up, down });
     itemCheckboxes.push(checkbox);
   }
+  updateMoveButtons();
 
   const updateFilterUI = () => {
     const total = rows.length;
@@ -4034,7 +4122,9 @@ function queueLiveScheduleRefresh() {
 async function refreshLiveSchedule() {
   scheduleRefreshTimer = null;
   if (!stopScheduleEvents || !state.auth.sessionToken) return;
-  if (autoSave.running || autoSave.timer || autoSaveHeld || state.swap || shiftPopoverEl?.classList.contains("open")) {
+  const editingOrder = employeeFilterPopoverEl && !employeeFilterPopoverEl.classList.contains("hidden");
+  if (autoSave.running || autoSave.timer || autoSaveHeld || state.swap ||
+      shiftPopoverEl?.classList.contains("open") || editingOrder) {
     scheduleRefreshTimer = setTimeout(refreshLiveSchedule, 350);
     return;
   }
@@ -4618,7 +4708,10 @@ function renderScheduleCurrentLine() {
   }
 
   const canEdit = canEditLine(line);
-  const { days, rows } = sched;
+  const { days } = sched;
+  const order = new Map(state.employeeOrderByLine[line].map((id, index) => [id, index]));
+  const rows = [...sched.rows].sort((first, second) =>
+    (order.get(first.employeeId) ?? order.size) - (order.get(second.employeeId) ?? order.size));
   const hiddenEmployeeIds = normalizeHiddenEmployeeIds(line, rows);
 
   const table = document.createElement("table");
@@ -4645,7 +4738,8 @@ function renderScheduleCurrentLine() {
   const filterBtn = document.createElement("button");
   filterBtn.type = "button";
   filterBtn.className = "employee-filter-btn";
-  filterBtn.setAttribute("aria-label", "Фильтр сотрудников");
+  filterBtn.setAttribute("aria-label", "Видимость и порядок сотрудников");
+  filterBtn.title = "Видимость и порядок сотрудников";
   filterBtn.innerHTML =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v5l-4 2v-7z"></path></svg>';
   if (hiddenEmployeeIds.size > 0) filterBtn.classList.add("active");
