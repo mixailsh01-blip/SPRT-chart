@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import portalConfig from '../config.json' with { type: 'json' };
 import { isShiftTemplateAvailable } from '../js/services/shiftTemplateScope.js';
 import { findSession } from './sessions.mjs';
+import { durationFromShift } from './routing.mjs';
 
 function listLunches(lunches, now) {
   const LOCAL_OFFSET_MS = 240 * 60 * 1000;
@@ -173,6 +174,57 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       value: type === 'due_date' ? start : date.toISOString().replace('.000Z', 'Z'),
       duration: (type === 'due_date' ? days : days - 1) * 1440,
     };
+  }
+
+  async function assertNoTpVacationOverlap(employeeId, startDate, days, knownTp = false) {
+    const rangeStart = Date.parse(startDate + 'T00:00:00Z') - LOCAL_OFFSET_MS;
+    const rangeEnd = rangeStart + days * 86400000;
+    const registry = await pyrus('GET', SCHEDULE_REGISTER_PATH);
+    if (!Array.isArray(registry.tasks)) throw new Error('Не удалось проверить смены в реестре Pyrus');
+
+    const employeeShifts = registry.tasks
+      .filter(task => Number(findFieldDeep(task.fields || [], F.person)?.value?.id) === employeeId)
+      .map(task => {
+        const due = findFieldDeep(task.fields || [], F.due);
+        const template = findFieldDeep(task.fields || [], F.template)?.value;
+        const duration = durMap.get(Number(task.id)) || Number(due?.duration) || durationFromShift(template);
+        const start = Date.parse(due?.value);
+        return {
+          start,
+          end: start + Math.max(1, duration * 60000),
+          department: findFieldDeep(task.fields || [], F.department)?.value,
+        };
+      })
+      .filter(shift => Number.isFinite(shift.start));
+    const conflicts = employeeShifts.filter(shift => shift.start < rangeEnd && shift.end > rangeStart);
+    if (!conflicts.length) return;
+
+    let supportEmployee = knownTp;
+    if (!supportEmployee) {
+      const [memberRoles, lineByItem, membersData] = await Promise.all([
+        rolesOf(employeeId), departmentLines(), membersWithDepartments(),
+      ]);
+      const member = membersData.members.find(person => Number(person.id) === employeeId);
+      const tpName = TP_DEPARTMENT.departmentName.trim().toUpperCase();
+      const nameIsTp = name => String(name || '').trim().toUpperCase() === tpName;
+      const shiftIsTp = shift => lineByItem[shift.department?.item_id] === 'TP' ||
+        Number(shift.department?.item_id || 0) === Number(TP_DEPARTMENT.departmentItemId || -1) ||
+        (shift.department?.values || []).some(nameIsTp) || nameIsTp(shift.department?.name);
+      const firstMonth = startDate.slice(0, 7);
+      const lastMonth = localDay(rangeEnd - 1).slice(0, 7);
+      supportEmployee = memberRoles.map(Number).includes(TP_MEMBER_ROLE) ||
+        nameIsTp(member?.department_name) || TP_DEPARTMENT.orgDepartmentIds.map(Number).includes(Number(member?.department_id)) ||
+        conflicts.some(shiftIsTp) || employeeShifts.some(shift => {
+          const month = localDay(shift.start).slice(0, 7);
+          return shiftIsTp(shift) && firstMonth <= month && month <= lastMonth;
+        });
+    }
+    if (!supportEmployee) return;
+
+    const dates = [...new Set(conflicts.map(shift => localDay(Math.max(shift.start, rangeStart))))].sort();
+    const displayed = dates.map(date => date.split('-').reverse().join('.')).join(', ');
+    throw Object.assign(new Error('В периоде отпуска есть смены ТП (' + displayed +
+      '). Сначала удалите смены и сохраните график.'), { status: 409 });
   }
 
   function permissionsFor(roles) {
@@ -923,6 +975,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       if (!Number.isInteger(employeeId) || employeeId <= 0) return fail(400, 'BAD_REQUEST', 'Не указан сотрудник');
       const period = vacationPeriod(start, days);
       if (period.duration === 0) delete period.duration;
+      await assertNoTpVacationOverlap(employeeId, start, days, line?.key === 'TP');
 
       let employeeDepartment;
       if (manageAll) {
@@ -981,6 +1034,9 @@ export async function handleAction({ request, store, telephony, lunches, schedul
         { id: V.year, value: start.slice(0, 4) },
         { id: V.days, value: days },
       ];
+      const employeeId = Number(findFieldDeep(task.fields || [], V.person)?.value?.id);
+      if (!employeeId) return fail(400, 'BAD_REQUEST', 'В отпуске не указан сотрудник');
+      await assertNoTpVacationOverlap(employeeId, start, days);
       const updated = await pyrus('POST', '/v4/tasks/' + taskId + '/comments', { field_updates: fields });
       // Pyrus может вернуть комментарий без задачи. В этом случае перечитываем её по ID.
       const saved = updated.task || await pyrus('GET', '/v4/tasks/' + taskId).then(data => data.task || data);

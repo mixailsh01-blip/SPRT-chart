@@ -413,16 +413,19 @@ function isSelfOnlyLine(line) {
   return (state.auth.permissions[line] || state.auth.permissions.ALL) === "self";
 }
 
+function isSupportEmployee(employeeId) {
+  const id = Number(employeeId);
+  const employee = state.employeesByLine.ALL.find(member => Number(member.id) === id);
+  return String(employee?.departmentName || "").trim().toUpperCase() === "ТП" ||
+    state.employeesByLine.TP?.some(member => Number(member.id) === id) ||
+    state.scheduleByLine.TP?.rows?.some(row => Number(row.employeeId) === id);
+}
+
 // Можно ли править конкретную строку (сотрудника) во вкладке
 function canEditRow(line, employeeId) {
-  if (line === "ALL") {
-    if (state.auth.permissions.ALL !== "edit") return false;
-    const id = Number(employeeId);
-    const employee = state.employeesByLine.ALL.find(member => Number(member.id) === id);
-    if (!employee || String(employee.departmentName).trim().toUpperCase() === "ТП") return false;
-    return !state.employeesByLine.TP?.some(member => Number(member.id) === id) &&
-      !state.scheduleByLine.TP?.rows?.some(row => Number(row.employeeId) === id);
-  }
+  if (line === "ALL") return state.auth.permissions.ALL === "edit" &&
+    state.employeesByLine.ALL.some(employee => Number(employee.id) === Number(employeeId)) &&
+    !isSupportEmployee(employeeId);
   const permission = state.auth.permissions[line] || state.auth.permissions.ALL;
   if (permission === "edit") return true;
   return permission === "self" && isOwnEmployeeId(employeeId);
@@ -3127,12 +3130,12 @@ async function createVacationForRange(line, row, firstDay, lastDay, submitLine =
   const sched = state.scheduleByLine[line];
   const days = sched?.days || [];
 
-  // В периоде не должно быть смен (с учётом несохранённых правок) и других отпусков
+  // В ТП сначала удаляют пересекающиеся смены.
   const shiftDays = [];
   days.forEach((d, idx) => {
     if (d >= firstDay && d <= lastDay && row.shiftsByDay[idx]) shiftDays.push(d);
   });
-  if (shiftDays.length) {
+  if ((line === "TP" || isSupportEmployee(row.employeeId)) && shiftDays.length) {
     alert(
       `В период отпуска у сотрудника есть смены: ${shiftDays.join(", ")} число.\n` +
         "Сначала удалите их (и сохраните), затем поставьте отпуск."
@@ -3215,7 +3218,7 @@ async function confirmAndDeleteVacation(row, vac) {
   refreshVacationsForCurrentMonth().catch(() => {});
 }
 
-function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
+function handleShiftCellClick({ line, row, day, dayIndex, shift, nominalShift, cellEl }) {
   // Режим обмена: клик выбирает вторую смену (или свободный день другого сотрудника)
   if (state.swap) {
     handleSwapTargetClick({ line, row, day, shift });
@@ -3237,7 +3240,8 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
         employeeId: row.employeeId,
         employeeName: row.employeeName,
         day,
-        shift: shift || null,
+        shift: shift || nominalShift || null,
+        nominal: Boolean(nominalShift),
       },
       cellEl
     );
@@ -3317,7 +3321,7 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
       amount,
       templateId,
       specialShortLabel,
-      telephony: previousShift ? previousShift.telephony !== false : true,
+      telephony: previousShift ? previousShift.telephony !== false : !nominalShift,
 	      startUtcIso: conversion.startUtcIso,
 	      endUtcIso: conversion.endUtcIso,
 	      durationMinutes: conversion.durationMinutes,
@@ -3350,6 +3354,7 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
       employeeName: row.employeeName,
       day,
       shift: shift || null,
+      nominalShift,
     },
     cellEl
   );
@@ -4927,6 +4932,14 @@ th1.appendChild(th1Label);
 
   const tbody = document.createElement("tbody");
 
+  const officeTemplate = (state.shiftTemplatesByLine.ALL || []).find(template =>
+    String(template.name).trim().toUpperCase().replace(/\s/g, "") === "СМЕНА5/2");
+  const nominalShift = {
+    startLocal: officeTemplate?.timeRange?.start || "09:00",
+    endLocal: officeTemplate?.timeRange?.end || "18:00",
+    templateId: officeTemplate?.id,
+  };
+
   rows.forEach((row) => {
     const tr = document.createElement("tr");
     tr.dataset.employeeId = String(row.employeeId);
@@ -4946,6 +4959,7 @@ th1.appendChild(th1Label);
     decorateLunchBadge(tdName, row.employeeId);
     tr.appendChild(tdName);
 
+    const showNominalSchedule = line === "ALL" && !isSupportEmployee(row.employeeId);
     let totalAmount = 0;
     let totalShifts = 0;
 
@@ -5031,7 +5045,10 @@ th1.appendChild(th1Label);
         continue;
       }
 
-      const shift = row.shiftsByDay[dayIndex];
+      const savedShift = row.shiftsByDay[dayIndex];
+      const weekDay = new Date(year, monthIndex, dayNumber).getDay();
+      const nominal = !savedShift && showNominalSchedule && weekDay >= 1 && weekDay <= 5;
+      const shift = savedShift || (nominal ? nominalShift : null);
 
       const td = document.createElement("td");
       td.className = "shift-cell";
@@ -5053,7 +5070,8 @@ th1.appendChild(th1Label);
       if (shift) {
         td.classList.add("has-shift");
         const pill = document.createElement("div");
-        pill.className = "shift-pill";
+        pill.className = nominal ? "shift-pill nominal-shift" : "shift-pill";
+        if (nominal) pill.title = "Номинальная смена 5/2, без телефонии";
 
         // Применение цвета к pill
         if (typeof ShiftColors !== 'undefined' && ShiftColors.applyColorToPill && shift.templateId) {
@@ -5078,17 +5096,19 @@ th1.appendChild(th1Label);
           pill.appendChild(line1);
           pill.appendChild(line2);
         }
-        // Индикатор телефонии: зелёная точка — в телефонии, красная — нет (например, выезд)
-        const telDot = document.createElement("span");
-        const onPhone = shift.telephony !== false;
-        telDot.className = `telephony-dot ${onPhone ? "on" : "off"}`;
-        telDot.title = onPhone ? "Включён в телефонию" : "Не в телефонии (выезд)";
-        if (shift.startUtcIso) telDot.dataset.start = shift.startUtcIso;
-        if (shift.endUtcIso) telDot.dataset.end = shift.endUtcIso;
-        telDot.dataset.employeeId = String(row.employeeId);
-        telDot.dataset.day = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
-        pill.appendChild(telDot);
-        decorateTelDotLunch(telDot);
+        if (!nominal) {
+          // Индикатор телефонии: зелёная точка — в телефонии, красная — нет (например, выезд)
+          const telDot = document.createElement("span");
+          const onPhone = shift.telephony !== false;
+          telDot.className = `telephony-dot ${onPhone ? "on" : "off"}`;
+          telDot.title = onPhone ? "Включён в телефонию" : "Не в телефонии (выезд)";
+          if (shift.startUtcIso) telDot.dataset.start = shift.startUtcIso;
+          if (shift.endUtcIso) telDot.dataset.end = shift.endUtcIso;
+          telDot.dataset.employeeId = String(row.employeeId);
+          telDot.dataset.day = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
+          pill.appendChild(telDot);
+          decorateTelDotLunch(telDot);
+        }
         td.appendChild(pill);
 
         totalAmount += shift.amount || 0;
@@ -5105,7 +5125,8 @@ th1.appendChild(th1Label);
           row,
           day: clickDay,
           dayIndex: clickDayIndex,
-          shift: shift || null,
+          shift: savedShift || null,
+          nominalShift: nominal ? nominalShift : null,
           cellEl: td,
         });
       });
@@ -5463,7 +5484,7 @@ function openVacationPopover(context, anchorEl) {
   });
 }
 function openShiftPopoverReadOnly(context, anchorEl) {
-  const { line, employeeId, employeeName, day, shift } = context;
+  const { line, employeeId, employeeName, day, shift, nominal } = context;
   const { year, monthIndex } = state.monthMeta;
   
   const dateLabel = `${String(day).padStart(2, "0")}.${String(
@@ -5521,6 +5542,7 @@ function openShiftPopoverReadOnly(context, anchorEl) {
     shift?.specialShortLabel,
     Boolean(shift)
   );
+  if (nominal) shiftPopoverEl.querySelector("#shift-popover-shift-name").textContent = "Номинальная смена 5/2 · без телефонии";
   positionShiftPopover(anchorEl);
 
   requestAnimationFrame(() => {
@@ -5581,7 +5603,7 @@ function setTimePickerValue(id, value) {
 }
 
 function openShiftPopover(context, anchorEl) {
-  const { line, employeeId, employeeName, day, shift } = context;
+  const { line, employeeId, employeeName, day, shift, nominalShift } = context;
   const { year, monthIndex } = state.monthMeta;
   const date = new Date(year, monthIndex, day);
   const hasShift = Boolean(shift);
@@ -5654,12 +5676,12 @@ function openShiftPopover(context, anchorEl) {
 
         <div class="field-row">
           <label>Начало</label>
-          ${timePickerHtml("shift-start-input", shift?.startLocal)}
+          ${timePickerHtml("shift-start-input", shift?.startLocal || nominalShift?.startLocal)}
         </div>
 
         <div class="field-row">
           <label>Окончание</label>
-          ${timePickerHtml("shift-end-input", shift?.endLocal)}
+          ${timePickerHtml("shift-end-input", shift?.endLocal || nominalShift?.endLocal)}
         </div>
 
         <div class="field-row">
@@ -5672,7 +5694,7 @@ function openShiftPopover(context, anchorEl) {
 
       <div class="shift-popover-section">
         <label class="telephony-toggle">
-          <input type="checkbox" id="shift-telephony-input" ${shift?.telephony === false ? "" : "checked"}>
+          <input type="checkbox" id="shift-telephony-input" ${nominalShift || shift?.telephony === false ? "" : "checked"}>
           <span>Включён в телефонию</span>
         </label>
 

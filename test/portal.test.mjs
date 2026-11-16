@@ -299,6 +299,8 @@ test('роль 1331872 редактирует смены вне ТП из вкл
 test('роль 1331872 может добавлять, переносить и удалять отпуска сотрудников ТП', async () => {
   const db = openDatabase(':memory:');
   const employee = { id: 20, first_name: 'Павел', last_name: 'Иванов' };
+  const office = { id: 21, first_name: 'Мария', department_name: 'Офис' };
+  let shifts = [];
   let granted = true;
   let task = { id: 77, form_id: 2470368, fields: [
     { id: 1, type: 'due_date_time', value: '2026-11-16T00:00:00Z', duration: 4320 },
@@ -308,12 +310,16 @@ test('роль 1331872 может добавлять, переносить и у
   ] };
   const writes = [];
   const pyrus = async (method, path, body) => {
-    if (path === '/v4/members') return { members: [member, employee] };
+    if (path === '/v4/members') return { members: [member, employee, office] };
     if (path === '/v4/contacts') return { organizations: [] };
     if (path === '/v4/roles') return { roles: [
       { id: 1331872, member_ids: granted ? [member.id] : [] },
       { id: 1329812, member_ids: [employee.id] },
     ] };
+    if (path === '/v4/catalogs/309670') return { items: [
+      { item_id: 5, values: ['ТП'] }, { item_id: 6, values: ['Офис'] },
+    ] };
+    if (path === '/v4/forms/2470373/register') return { tasks: shifts };
     if (path === '/v4/forms/2470368') return { fields: [
       { id: 4, info: { options: [{ choice_value: 'ТП', choice_id: 1 }] } },
     ] };
@@ -344,9 +350,31 @@ test('роль 1331872 может добавлять, переносить и у
   const act = (action, params) => portal.act(request(action, params, token));
   const period = { task_id: 77, start_date: '2026-12-01', days: 1 };
 
-  const created = await act('vacation.create', { line: 'ALL', employee_id: employee.id, start_date: '2026-11-23', days: 2 });
+  const vacation = { line: 'ALL', employee_id: employee.id, start_date: '2026-11-23', days: 2 };
+  const makeShift = (id, person, department, start) => ({ id, fields: [
+    { id: 1, value: { item_id: department } },
+    { id: 2, value: { id: person } },
+    { id: 3, value: start, duration: 600 },
+  ] });
+  shifts = [
+    // 22:00 по Самаре накануне первого дня отпуска.
+    makeShift(91, employee.id, 5, '2026-11-22T18:00:00Z'),
+    makeShift(92, office.id, 6, '2026-11-23T05:00:00Z'),
+  ];
+  const refused = await act('vacation.create', vacation);
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error.message, /23\.11\.2026/);
+  assert.equal(writes.length, 0);
+  assert.equal((await act('vacation.create', { ...vacation, employee_id: office.id })).status, 200);
+  writes.length = 0;
+
+  shifts = [];
+  const created = await act('vacation.create', vacation);
   assert.equal(created.status, 200);
   assert.deepEqual(writes[0].find(field => field.id === 4).value.choice_ids, [1]);
+  shifts = [makeShift(93, employee.id, 5, '2026-12-01T05:00:00Z')];
+  assert.equal((await act('vacation.update', period)).status, 409);
+  shifts = [];
   const updated = await act('vacation.update', period);
   assert.equal(updated.status, 200);
   assert.deepEqual(writes[1], [

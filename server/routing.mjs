@@ -1,3 +1,16 @@
+// Pyrus не хранит длительность у «Дата и время смены» — берём её из «Время работы» шаблона («9:00-18:00»)
+export function durationFromShift(v) {
+  const vals = Array.isArray(v?.values) ? v.values : [];
+  for (const s of vals) {
+    const m = String(s || '').match(/(\d{1,2})[:.](\d{2})\s*[-–—]\s*(\d{1,2})[:.](\d{2})/);
+    if (!m) continue;
+    let d = (+m[3] * 60 + +m[4]) - (+m[1] * 60 + +m[2]);
+    if (d <= 0) d += 24 * 60; // ночная смена через полночь
+    return d;
+  }
+  return 0;
+}
+
 export function scheduleRows({ members, tasks, telephony, now }) {
   const F = { dept: 1, person: 2, due: 3, shift: 5 };
   const LOCAL_OFFSET_MIN = 240; // UTC+4 — только для читаемых date_open/date_close
@@ -18,19 +31,6 @@ export function scheduleRows({ members, tasks, telephony, now }) {
 
   const fmtLocal = ms => new Date(ms + LOCAL_OFFSET_MIN * 60000).toISOString().slice(0, 16).replace('T', ' ');
   const catText = v => (Array.isArray(v?.values) ? v.values.filter(Boolean)[0] : v?.name) || '';
-
-  // Pyrus не хранит длительность у «Дата и время смены» — берём её из «Время работы» шаблона («9:00-18:00»)
-  const durationFromShift = (v) => {
-    const vals = Array.isArray(v?.values) ? v.values : [];
-    for (const s of vals) {
-      const m = String(s || '').match(/(\d{1,2})[:.](\d{2})\s*[-–—]\s*(\d{1,2})[:.](\d{2})/);
-      if (!m) continue;
-      let d = (+m[3] * 60 + +m[4]) - (+m[1] * 60 + +m[2]);
-      if (d <= 0) d += 24 * 60; // ночная смена через полночь
-      return d;
-    }
-    return 0;
-  };
 
   const out = [];
   for (const t of tasks) {
