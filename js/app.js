@@ -5092,7 +5092,13 @@ th1.appendChild(th1Label);
           ShiftColors.applyColorToPill(pill, shift.templateId, line);
         }
 
-        if (shift.specialShortLabel) {
+        if (nominal && dayKind === "preholiday") {
+          pill.classList.add("nominal-shortened");
+          const label = document.createElement("div");
+          label.className = "schedule-shortened-label";
+          label.append("Сокра", document.createElement("wbr"), "щённый");
+          pill.appendChild(label);
+        } else if (shift.specialShortLabel) {
           pill.classList.add("special");
           const label = document.createElement("div");
           label.className = "shift-special-label";
@@ -5109,13 +5115,6 @@ th1.appendChild(th1Label);
 
           pill.appendChild(line1);
           pill.appendChild(line2);
-        }
-        if (nominal && dayKind === "preholiday") {
-          pill.classList.add("nominal-shortened");
-          const label = document.createElement("div");
-          label.className = "schedule-shortened-label";
-          label.append("Сокра", document.createElement("wbr"), "щённый");
-          pill.appendChild(label);
         }
         if (!nominal) {
           // Индикатор телефонии: зелёная точка — в телефонии, красная — нет (например, выезд)

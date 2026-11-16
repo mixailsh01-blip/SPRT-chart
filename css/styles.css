@@ -2115,9 +2115,14 @@ body.legend-open {
   pointer-events: none;
 }
 
+.shift-pill.nominal-shortened {
+  justify-content: center;
+  min-height: 28px;
+  padding-inline: 2px;
+}
+
 .schedule-shortened-label {
   max-width: 100%;
-  margin-top: 2px;
   color: inherit;
   font-size: 8px;
   line-height: 1.15;
@@ -2126,10 +2131,6 @@ body.legend-open {
 }
 
 @media (max-width: 768px) {
-  .shift-pill.nominal-shortened {
-    padding-inline: 2px;
-  }
-
   .schedule-holiday-label,
   .schedule-shortened-label {
     font-size: 7px;
