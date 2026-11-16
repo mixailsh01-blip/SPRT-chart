@@ -2211,6 +2211,22 @@ body.legend-open {
   animation: birthday-spark 720ms ease-out both;
 }
 
+.birthday-pill .birthday-firework i {
+  animation-duration: 1.4s;
+  animation-iteration-count: infinite;
+}
+
+.birthday-pill .birthday-firework i:nth-child(even) {
+  animation-delay: -0.7s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .birthday-firework i {
+    animation: none;
+    visibility: hidden;
+  }
+}
+
 @keyframes birthday-spark {
   0% { transform: translate(0, 0) scale(0.4); opacity: 0; }
   18% { opacity: 1; }

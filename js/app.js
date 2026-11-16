@@ -5282,7 +5282,7 @@ function formatBirthdayLabel(day, month) {
   return `${dd}.${mm}`;
 }
 
-function launchBirthdayFirework(anchor) {
+function launchBirthdayFirework(anchor, { repeat = false } = {}) {
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   anchor.querySelector(".birthday-firework")?.remove();
   const burst = document.createElement("span");
@@ -5299,7 +5299,7 @@ function launchBirthdayFirework(anchor) {
     burst.appendChild(spark);
   }
   anchor.appendChild(burst);
-  setTimeout(() => burst.remove(), 800);
+  if (!repeat) setTimeout(() => burst.remove(), 800);
 }
 
 function createBirthdayBadge(employeeName, day, month) {
@@ -5310,10 +5310,7 @@ function createBirthdayBadge(employeeName, day, month) {
   const dateLabel = formatBirthdayLabel(day, month);
   badge.title = "День рождения: " + dateLabel;
   badge.setAttribute("aria-label", "День рождения — " + employeeName + ", " + dateLabel);
-  badge.addEventListener("pointerenter", event => {
-    if (event.pointerType === "mouse") launchBirthdayFirework(badge);
-  });
-  badge.addEventListener("focus", () => launchBirthdayFirework(badge));
+  launchBirthdayFirework(badge, { repeat: true });
   badge.addEventListener("click", event => {
     event.stopPropagation();
     openBirthdayPopover({ employeeName, dateLabel }, badge);
