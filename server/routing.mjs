@@ -85,6 +85,7 @@ export function departmentRoster({ members, roles, mango }) {
         key: `${dept.key}_${u.user_id}`,
         dept: dept.key,
         mango_user_id: String(u.user_id),
+        person_id: m.id,
         name: fullName,
       });
     }
@@ -132,7 +133,7 @@ export function mangoGroups({ schedules, mangoUsers, lunches, rosterRows, groupI
   for (const r of rosterRows) {
     if (!r || r.mango_user_id == null) continue;
     const arr = rosterByDept.get(r.dept) || [];
-    arr.push({ id: String(r.mango_user_id), name: r.name });
+    arr.push({ id: String(r.mango_user_id), personId: Number(r.person_id), name: r.name });
     rosterByDept.set(r.dept, arr);
   }
 
@@ -140,9 +141,9 @@ export function mangoGroups({ schedules, mangoUsers, lunches, rosterRows, groupI
 
   // Кто сейчас на обеде (до тех пор, пока сам не нажал «вернулся») — их не включаем и в аварийный состав
   const normName = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').split(/\s+/).filter(Boolean).sort().join(' ');
-  const lunchNames = lunches
-    .filter((l) => l && l.status === 'active')
-    .map((l) => l.name);
+  const activeLunches = lunches.filter(l => l?.status === 'active');
+  const lunchNames = activeLunches.map(l => l.name);
+  const lunchIds = new Set(activeLunches.map(l => Number(l.member_id)).filter(Boolean));
   const lunchSet = new Set(lunchNames.map(normName));
 
   const DEPTS = [
@@ -161,7 +162,7 @@ export function mangoGroups({ schedules, mangoUsers, lunches, rosterRows, groupI
     let fallbackNames = [];
     if (operatorIds.length === 0 && isWorkingHours) {
       isFallback = true;
-      const roster = (rosterByDept.get(dept.key) || []).filter((r) => !lunchSet.has(normName(r.name)));
+      const roster = (rosterByDept.get(dept.key) || []).filter(r => !lunchIds.has(r.personId) && !lunchSet.has(normName(r.name)));
       operatorIds = [...new Set(roster.map((r) => r.id))];
       fallbackNames = roster.map((r) => r.name);
     }

@@ -64,7 +64,7 @@ test('смена берётся из Pyrus, а настройки телефон
     { user_id: '11', number: '102', user_name: 'Анна Иванова' },
   ];
   const rosterRows = [
-    { dept: 'TP', name: 'Петров Иван', mango_user_id: '10' },
+    { dept: 'TP', name: 'Петров Иван', mango_user_id: '10', person_id: member.id },
     { dept: 'TP', name: 'Иванова Анна', mango_user_id: '11' },
   ];
   const context = { mangoUsers, rosterRows, groupId: '20624288', now };
@@ -75,7 +75,7 @@ test('смена берётся из Pyrus, а настройки телефон
   assert.deepEqual(normal.payload.group.operators, [{ id: '10' }]);
   assert.equal(normal.isFallback, false);
   const [lunch] = mangoGroups({ ...context, schedules, lunches: [
-    { member_id: member.id, name: 'Петров Иван', status: 'active' },
+    { member_id: member.id, name: 'Иван Сидоров', status: 'active', overdue: true },
   ] });
   assert.equal(lunch.isFallback, true);
   assert.deepEqual(lunch.payload.group.operators, [{ id: '11' }]);
@@ -86,9 +86,10 @@ test('смена берётся из Pyrus, а настройки телефон
   assert.equal(custom[0].end_utc, '2026-11-16T08:30:00.000Z');
 });
 
-test('синхронизация загружает смены, а обед можно начать и завершить', async () => {
+test('просроченный обед остаётся активным до ручного возврата и создаёт уведомления один раз', async () => {
   const db = openDatabase(':memory:');
-  const pyrus = async (method, path) => {
+  const notifications = [];
+  const pyrus = async (method, path, body) => {
     if (path === '/v4/members') return { members: [member] };
     if (path === '/v4/roles') return { roles: [] };
     if (path === '/v4/forms/2470373/register') return { tasks: [{ id: 47, fields: [
@@ -96,12 +97,15 @@ test('синхронизация загружает смены, а обед мо
       { id: 2, value: { id: member.id } },
       { id: 3, value: new Date(Date.now() - 60_000).toISOString(), duration: 120 },
     ] }] };
-    if (path === '/v4/tasks') return { task: { id: 58 } };
+    if (path === '/v4/tasks') {
+      notifications.push(body);
+      return { task: { id: 58 + notifications.length } };
+    }
     throw new Error('Unexpected API: ' + method + ' ' + path);
   };
   const mail = [];
   const portal = createPortal({
-    db, pyrus, env, sendMail: async message => { mail.push(message); },
+    db, pyrus, env: { ...env, LUNCH_ALERT_EMAIL: 'manager@example.test' }, sendMail: async message => { mail.push(message); },
     mango: async () => assert.fail('Mango disabled'),
   });
   await portal.tick();
@@ -111,7 +115,25 @@ test('синхронизация загружает смены, а обед мо
   const login = await portal.act(request('auth.verify', { identifier: member.email, code }));
   const token = login.body.data.sessionToken;
   assert.equal((await portal.act(request('lunch.start', {}, token))).status, 200);
-  assert.equal(db.lunches.all()[0].status, 'active');
+  const [active] = db.lunches.all();
+  assert.equal(active.status, 'active');
+  const previousDay = Date.now() - 25 * 60 * 60_000;
+  db.lunches.put(active.id, {
+    ...active,
+    start_utc: new Date(previousDay - 20 * 60_000).toISOString(),
+    end_utc: new Date(previousDay).toISOString(),
+  });
+  await portal.tick();
+  await portal.tick();
+  const [expired] = db.lunches.all();
+  assert.equal(expired.status, 'active');
+  assert.equal(expired.overdue, true);
+  assert.equal(expired.ended_at, active.ended_at);
+  const status = await portal.act(request('lunch.status', {}, token));
+  assert.equal(status.body.data.lunch.status, 'active');
+  assert.equal(status.body.data.lunch.overdue, true);
+  assert.deepEqual(notifications.slice(1).map(task => task.fields.find(field => field.id === 3).value.id), [1195524, member.id]);
+  assert.equal(mail.filter(message => message.to === 'manager@example.test').length, 1);
   await portal.act(request('lunch.end', {}, token));
   assert.equal(db.lunches.all()[0].status, 'returned');
 });

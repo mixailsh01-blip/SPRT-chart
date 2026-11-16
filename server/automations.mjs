@@ -2,6 +2,7 @@ import { departmentRoster, mangoGroups, scheduleRows } from './routing.mjs';
 
 const NOTIFY_FORM = 2472006;
 const LOGIN_NOTIFICATION = 1;
+const LUNCH_OVERDUE_NOTIFICATION = 3;
 const SHIFT_FORM = 2470373;
 const MINUTE = 60_000;
 const localTime = value => new Date(Date.parse(value) + 240 * MINUTE).toISOString().slice(11, 16);
@@ -90,30 +91,52 @@ export function createAutomations({ db, pyrus, mango, sendMail, env }) {
 
   async function tickLunches(now = Date.now()) {
     const lunches = db.lunches.all();
-    const expired = lunches.filter(row =>
-      ['active', 'scheduled'].includes(row.status) && Date.parse(row.end_utc) <= now);
     const starting = lunches.filter(row =>
-      row.status === 'scheduled' && Date.parse(row.start_utc) <= now && Date.parse(row.end_utc) > now);
-    if (!expired.length && !starting.length) return false;
+      row.status === 'scheduled' && Date.parse(row.start_utc) <= now);
+    const expired = [...lunches.filter(row => row.status === 'active'), ...starting]
+      .filter(row => row.overdue !== true && Date.parse(row.end_utc) <= now);
+    if (!starting.length && !expired.length) return false;
+
     db.transaction(() => {
-      for (const row of expired) {
-        db.lunches.put(row.id, { ...row, status: 'auto', overdue: true, ended_at: new Date(now).toISOString() });
-      }
       for (const row of starting) db.lunches.put(row.id, { ...row, status: 'active' });
+      for (const row of expired) db.lunches.put(row.id, { ...row, status: 'active', overdue: true });
     });
-    if (env.LUNCH_ALERT_EMAIL) {
-      for (const row of expired.filter(row => row.status === 'active')) {
-        try {
-          await sendMail({
-            to: env.LUNCH_ALERT_EMAIL,
-            subject: 'Обед просрочен: ' + row.name,
-            text: row.name + ' не завершил обед с ' + localTime(row.start_utc) +
-              ' до ' + localTime(row.end_utc) + '. Статус обеда закрыт автоматически.',
-          });
-        } catch { console.error('Не удалось отправить письмо о просроченном обеде'); }
+
+    for (const row of expired) {
+      const start = localTime(row.start_utc);
+      const end = localTime(row.end_utc);
+      const managerText = row.name + (row.dept ? ' (' + row.dept + ')' : '') +
+        ' не завершил обед к ' + end + ' (начало в ' + start + '). Сотрудник вернётся в группу Mango после нажатия «В линию».';
+      const employeeText = 'Время обеда истекло в ' + end + '. Когда вернётесь, нажмите «В линию» в графике смен.';
+      const deliveries = [
+        { channel: 'Pyrus (руководитель)', send: () => notifyLunchOverdue(1195524, managerText) },
+      ];
+      if (Number(row.member_id)) {
+        deliveries.push({ channel: 'Pyrus (сотрудник)', send: () => notifyLunchOverdue(Number(row.member_id), employeeText) });
       }
+      if (env.LUNCH_ALERT_EMAIL) {
+        deliveries.push({
+          channel: 'SMTP',
+          send: () => sendMail({ to: env.LUNCH_ALERT_EMAIL, subject: 'Обед просрочен: ' + row.name, text: managerText }),
+        });
+      }
+      await Promise.all(deliveries.map(async ({ channel, send }) => {
+        try { await send(); }
+        catch { console.error('Не удалось отправить уведомление о просроченном обеде через ' + channel); }
+      }));
     }
-    return true;
+    return starting.length > 0;
+  }
+
+  async function notifyLunchOverdue(memberId, text) {
+    await pyrus('POST', '/v4/tasks', {
+      form_id: NOTIFY_FORM,
+      fields: [
+        { id: 8, value: { choice_ids: [LUNCH_OVERDUE_NOTIFICATION] } },
+        { id: 3, value: { id: memberId } },
+        { id: 1, value: text },
+      ],
+    });
   }
 
   async function notifyLogin({ memberId, email, code, link }) {
@@ -143,7 +166,8 @@ export function createAutomations({ db, pyrus, mango, sendMail, env }) {
     for (const task of tasks) {
       if (db.notifications.has(task.id)) continue;
       const field = id => task.fields?.find(value => value.id === id)?.value;
-      if (field(8)?.choice_ids?.map(Number).includes(LOGIN_NOTIFICATION)) continue;
+      const types = field(8)?.choice_ids?.map(Number) || [];
+      if (types.includes(LOGIN_NOTIFICATION) || types.includes(LUNCH_OVERDUE_NOTIFICATION)) continue;
       const person = field(3);
       if (!person?.id) continue;
       let email = person.email;

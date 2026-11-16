@@ -9,7 +9,7 @@ function listLunches(lunches, now) {
 
   const list = lunches
     .filter((r) => r && r.member_id != null && r.member_id !== '' && r.status !== 'cancelled')
-    .filter((r) => !Number.isNaN(ms(r.start_utc)) && localDay(ms(r.start_utc)) === today)
+    .filter((r) => !Number.isNaN(ms(r.start_utc)) && (r.status === 'active' || localDay(ms(r.start_utc)) === today))
     .map((r) => ({
       member_id: Number(r.member_id),
       name: String(r.name || ''),
@@ -203,7 +203,8 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       .filter((r) => Number(r.member_id) === Number(memberId) && r.status !== 'cancelled')
       .filter((r) => localDay(new Date(r.start_utc).getTime()) === localDay(now));
 
-  const openSegmentOf = (memberId) => todaysSegments(memberId).find((r) => r.status === 'active' || r.status === 'scheduled') || null;
+  const openSegmentOf = (memberId) => lunchRows.find((r) =>
+    Number(r.member_id) === Number(memberId) && (r.status === 'active' || r.status === 'scheduled')) || null;
 
   // Сколько уже «потрачено» сегодня: у активного — сколько прошло с начала, у закрытых — фактическая длительность.
   function usedMsToday(memberId) {
@@ -227,7 +228,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
           status: row.status, // scheduled | active
           start_utc: row.start_utc,
           end_utc: row.end_utc,
-          overdue: false,
+          overdue: active && new Date(row.end_utc).getTime() <= now,
           remainingSec: active ? Math.max(0, Math.round((new Date(row.end_utc).getTime() - now) / 1000)) : 0,
         }
       : null;
@@ -578,9 +579,8 @@ export async function handleAction({ request, store, telephony, lunches, schedul
     // Обед: сотрудник на смене уходит из группы Манго на время обеда. Суточный лимит — DAILY_LUNCH_BUDGET_MS
     // (1 час), расходовать можно за сколько угодно заходов — включать и выключать в течение смены. Заход можно
     // начать сразу или запланировать (payload.start_at, ISO) на более позднее время этой же смены — тогда до
-    // наступления времени сотрудник остаётся в группе как обычно; фоновая задача обедов раз в
-    // минуту переводит запланированный заход в активный (убирает из группы) и закрывает просроченный активный
-    // заход (возвращает в группу, шлёт письмо руководителю, если сотрудник не вернулся сам).
+    // наступления времени сотрудник остаётся в группе как обычно. После истечения срока активный обед
+    // продолжается до ручного возврата. Таймер помечает просрочку и отправляет уведомления.
     if (action === 'lunch.status') return ok(lunchState(session));
 
     if (action === 'lunch.start') {

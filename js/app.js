@@ -3497,7 +3497,7 @@ function renderLunchWidget() {
     const left = (lunchUi.endsAt - Date.now()) / 1000;
     const over = left <= 0;
     lunchTimerEl.textContent = over ? "🍽 Время вышло" : `🍽 ${formatCountdown(left)}`;
-    lunchTimerEl.title = over ? "Возвращаем в линию…" : "До автоматического возврата в линию";
+    lunchTimerEl.title = over ? "Нажмите «В линию», когда вернётесь" : "До конца времени обеда";
     lunchTimerEl.classList.remove("hidden");
     lunchTimerEl.classList.toggle("overdue", over);
     btnLunchEl.textContent = "↩ В линию";

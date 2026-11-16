@@ -102,14 +102,13 @@ function lunchState(memberId) {
   // «Таймер»: запланированный заход стартует сам, активный — сам возвращается по истечении своей доли лимита
   for (const l of segmentsOf(memberId)) {
     if (l.status === "scheduled" && l.start <= t) Object.assign(l, { status: "active" });
-    if (l.status === "active" && l.end <= t) Object.assign(l, { status: "auto", endedAt: t });
   }
   const row = openSegmentOf(memberId);
   const active = row?.status === "active";
   const remainingMs = Math.max(0, DAILY_LUNCH_BUDGET_MS - usedMsToday(memberId));
   const lunch = row
     ? { status: row.status, start_utc: new Date(row.start).toISOString(), end_utc: new Date(row.end).toISOString(),
-        overdue: false, remainingSec: active ? Math.max(0, Math.round((row.end - t) / 1000)) : 0 }
+        overdue: active && row.end <= t, remainingSec: active ? Math.max(0, Math.round((row.end - t) / 1000)) : 0 }
     : null;
   return {
     onShift: !!shift,
