@@ -779,31 +779,48 @@ export async function handleAction({ request, store, telephony, lunches, schedul
     };
 
     if (action === 'settings.shift.save') {
+      const itemId = p.item_id == null ? null : Number(p.item_id);
       const name = String(p.name || '').trim();
       const time = String(p.time || '').trim();
       const amount = Number(p.amount || 0);
-      const dept = String(p.dept || '').trim().toUpperCase() === 'ТП' ? 'ТП' : 'ВСЕ';
+      const requestedDept = String(p.dept || '').trim();
+      if (itemId != null && (!Number.isSafeInteger(itemId) || itemId <= 0)) return fail(400, 'BAD_REQUEST', 'Не указан шаблон');
       if (!name || name.length > 60) return fail(400, 'BAD_REQUEST', 'Укажите название смены (до 60 символов)');
       if (!/^\d{1,2}[:.]\d{2}\s*-\s*\d{1,2}[:.]\d{2}$/.test(time)) return fail(400, 'BAD_REQUEST', 'Время смены — в формате 08:00-20:00');
       if (!Number.isFinite(amount) || amount < 0 || amount > 1000000) return fail(400, 'BAD_REQUEST', 'Некорректная сумма');
-      if (!canManageTemplate(session.roles, dept)) return fail(403, 'FORBIDDEN', 'Нет прав на шаблоны смен этого отдела');
+
       const sc = await shiftsCatalog();
-      // Нельзя перезаписать чужой шаблон с тем же названием
-      const existing = sc.items.find((it) => String((it.values || [])[sc.idx.name] || '').trim().toUpperCase() === name.toUpperCase());
-      if (existing && !canManageTemplate(session.roles, sc.idx.dept >= 0 ? (existing.values || [])[sc.idx.dept] : '')) {
-        return fail(403, 'FORBIDDEN', 'Шаблон с таким названием уже есть и вам недоступен');
-      }
       if (sc.idx.name !== 0) return fail(502, 'BACKEND_ERROR', 'Название смены должно быть первой колонкой справочника');
-      const values = sc.headers.map(() => '');
-      values[sc.idx.name] = name;
+      const existing = itemId != null
+        ? sc.items.find(item => Number(item.item_id) === itemId)
+        : sc.items.find(item => String(item.values?.[0] ?? '').trim().toUpperCase() === name.toUpperCase());
+      if (itemId != null && !existing) return fail(404, 'NOT_FOUND', 'Шаблон не найден');
+      const previousDept = String(existing?.values?.[sc.idx.dept] ?? '');
+      if (existing && !canManageTemplate(session.roles, previousDept)) {
+        return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого шаблона');
+      }
+      if (itemId != null && name !== String(existing.values[0]).trim()) {
+        return fail(409, 'TEMPLATE_CHANGED', 'Название шаблона изменилось в Pyrus. Обновите список и повторите.');
+      }
+
+      const dept = deptTokenOf(requestedDept);
+      const knownDept = dept === 'ТП' || dept === 'ВСЕ';
+      if (!knownDept && !(existing && requestedDept === previousDept.trim())) {
+        return fail(400, 'BAD_REQUEST', 'Выберите, для каких отделов доступна смена');
+      }
+      if (!canManageTemplate(session.roles, dept)) return fail(403, 'FORBIDDEN', 'Нет прав на шаблоны смен этого отдела');
+      if (sc.idx.dept < 0) return fail(502, 'BACKEND_ERROR', 'В справочнике смен нет колонки «Отдел»');
+
+      const values = sc.headers.map((_, index) => String(existing?.values?.[index] ?? ''));
+      values[0] = existing ? values[0] : name;
       if (sc.idx.time >= 0) values[sc.idx.time] = time.replace(/\s+/g, '');
       if (sc.idx.amount >= 0) values[sc.idx.amount] = String(amount);
-      if (sc.idx.dept >= 0) values[sc.idx.dept] = dept;
-      const rows = sc.items.map((it) => ({ values: (it.values || []).map((v) => String(v == null ? '' : v)) }));
-      const at = rows.findIndex((r) => String(r.values[sc.idx.name] || '').trim().toUpperCase() === name.toUpperCase());
-      if (at >= 0) rows[at] = { values }; else rows.push({ values });
-      await pyrus('POST', `/v4/catalogs/${CAT_SHIFTS}`, { apply: true, catalog_headers: sc.headers, items: rows });
-      return ok({ saved: name });
+      values[sc.idx.dept] = knownDept ? dept : previousDept;
+      if (existing && values.every((value, index) => value === String(existing.values?.[index] ?? ''))) {
+        return ok({ saved: values[0] });
+      }
+      await pyrus('POST', '/v4/catalogs/' + CAT_SHIFTS + '/diff', { upsert: [{ values }] });
+      return ok({ saved: values[0] });
     }
 
     if (action === 'settings.shift.delete') {

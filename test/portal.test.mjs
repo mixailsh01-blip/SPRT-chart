@@ -350,3 +350,52 @@ test('роль 1331872 может добавлять, переносить и у
   assert.equal((await act('vacation.delete', { task_id: 77 })).status, 403);
   assert.equal(writes.length, 2);
 });
+
+test('администратор меняет доступ шаблона, сохраняя его ключ и остальные колонки', async () => {
+  const db = openDatabase(':memory:');
+  const editor = { id: 11, email: 'editor@example.test' };
+  const items = [
+    { item_id: 100, values: ['СМЕНА 5/2', '9:00-18:00', '0', 'ТП', 'Доп. значение'] },
+    { item_id: 101, values: ['СМЕНА 2/2', '9:00-21:00', '0', 'ТП', 'Другая строка'] },
+  ];
+  const writes = [];
+  const pyrus = async (method, path, body) => {
+    if (path === '/v4/members') return { members: [member, editor] };
+    if (path === '/v4/roles') return { roles: [
+      { id: 1331784, member_ids: [member.id] }, { id: 1329637, member_ids: [editor.id] },
+    ] };
+    if (path === '/v4/tasks' && method === 'POST' && body.form_id === 2472006) return { task: { id: 900 } };
+    if (path === '/v4/catalogs/309671' && method === 'GET') {
+      return {
+        catalog_headers: ['Названия смен', 'Время работы', 'Сумма за смену', 'Отдел', 'Дополнительно']
+          .map(name => ({ name })),
+        items: structuredClone(items),
+      };
+    }
+    if (path === '/v4/catalogs/309671/diff' && method === 'POST') {
+      writes.push(body);
+      return { updated: [{ item_id: 100, values: body.upsert[0].values }] };
+    }
+    throw new Error('Unexpected API: ' + method + ' ' + path);
+  };
+  const mail = [];
+  const portal = createPortal({
+    db, pyrus, env, sendMail: async message => { mail.push(message); }, mango: async () => {},
+  });
+  async function login(email) {
+    await portal.act(request('auth.start', { identifier: email }));
+    const code = mail.at(-1).text.match(/Код: (\d{6})/)[1];
+    const result = await portal.act(request('auth.verify', { identifier: email, code }));
+    return result.body.data.sessionToken;
+  }
+
+  const adminToken = await login(member.email);
+  const editorToken = await login(editor.email);
+  const change = { item_id: 100, name: 'СМЕНА 5/2', time: '09:00-18:00', amount: 0, dept: 'ВСЕ' };
+  assert.equal((await portal.act(request('settings.shift.save', change, editorToken))).status, 403);
+  assert.equal((await portal.act(request('settings.shift.save', { ...change, name: 'другой ключ' }, adminToken))).status, 409);
+  assert.equal((await portal.act(request('settings.shift.save', change, adminToken))).status, 200);
+  assert.deepEqual(writes, [{
+    upsert: [{ values: ['СМЕНА 5/2', '09:00-18:00', '0', 'ВСЕ', 'Доп. значение'] }],
+  }]);
+});

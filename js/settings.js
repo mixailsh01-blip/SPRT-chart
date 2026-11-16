@@ -1,5 +1,5 @@
 // Настройки графика (кнопка в меню аватарки).
-//  • «Шаблоны смен» — добавление/удаление строк справочника Pyrus «смены».
+//  • «Шаблоны смен» — добавление, редактирование и удаление строк справочника Pyrus «смены».
 //    Админ видит и правит шаблоны для «ВСЕ» и ТП, редактор графика — только ТП.
 //  • «Доступ» (только админ) — выдача/снятие ролей «Админ» и «Редактор графика».
 // Права проверяет бэкенд (settings.shift.save / settings.shift.delete / settings.role.set);
@@ -159,6 +159,11 @@ export function createSettingsPanel({
         info.appendChild(el("span", "settings-muted", ` ${t.time || "—"} · ${t.amount || 0} ₽ · ${deptLabel(t.dept)}`));
         row.appendChild(info);
         if (canManageTemplate(ctx, t)) {
+          const actions = el("div", "settings-item-actions");
+          const edit = el("button", "btn toggle", "Изменить");
+          edit.type = "button";
+          edit.setAttribute("aria-label", "Изменить шаблон «" + t.name + "»");
+          edit.addEventListener("click", () => openForm(t));
           const del = el("button", "btn toggle settings-danger", "Удалить");
           del.type = "button";
           del.addEventListener("click", async () => {
@@ -174,7 +179,8 @@ export function createSettingsPanel({
               alert(`Не удалось удалить: ${err.message || err}`);
             }
           });
-          row.appendChild(del);
+          actions.append(edit, del);
+          row.appendChild(actions);
         }
         list.appendChild(row);
       }
@@ -182,26 +188,32 @@ export function createSettingsPanel({
     filterSel.addEventListener("change", renderList);
     renderList();
 
-    // Форма добавления
     const form = el("form", "settings-form hidden");
-    form.appendChild(el("div", "settings-subtitle", "Новая смена"));
+    const formTitle = el("div", "settings-subtitle");
+    form.appendChild(formTitle);
+    let editing = null;
     const nameIn = el("input", "settings-input");
     nameIn.placeholder = "Название, например «Утро»";
     nameIn.maxLength = 60;
     nameIn.required = true;
+    nameIn.setAttribute("aria-label", "Название смены");
     const fromIn = el("input", "settings-input");
     fromIn.type = "time";
     fromIn.required = true;
+    fromIn.setAttribute("aria-label", "Начало смены");
     const toIn = el("input", "settings-input");
     toIn.type = "time";
     toIn.required = true;
+    toIn.setAttribute("aria-label", "Конец смены");
     const amountIn = el("input", "settings-input");
     amountIn.type = "number";
     amountIn.min = "0";
     amountIn.step = "1";
     amountIn.placeholder = "Сумма, ₽";
+    amountIn.setAttribute("aria-label", "Сумма за смену");
     amountIn.value = "0";
     const deptSel = el("select", "settings-input");
+    deptSel.setAttribute("aria-label", "Доступность смены по отделам");
     const deptOptions = ctx.isAdmin
       ? [[TEXT_TP, "Только ТП"], [TEXT_ALL, "Для всех отделов"]]
       : [[TEXT_TP, "Только ТП"]];
@@ -219,28 +231,54 @@ export function createSettingsPanel({
     const btnRow = el("div", "settings-row");
     btnRow.append(submit, cancel);
     form.append(nameIn, timeRow, amountIn, deptSel, btnRow);
-    // Форма скрыта, пока не нажата «＋ Добавить смену»
-    const setFormOpen = (open) => {
+    const setFormOpen = open => {
       form.classList.toggle("hidden", !open);
       addToggle.classList.toggle("hidden", open);
-      if (open) nameIn.focus();
     };
-    addToggle.addEventListener("click", () => setFormOpen(true));
-    cancel.addEventListener("click", () => {
-      form.reset();
-      amountIn.value = "0";
-      setFormOpen(false);
-    });
+    function openForm(template = null) {
+      editing = template;
+      formTitle.textContent = template ? "Настройки смены" : "Новая смена";
+      nameIn.value = template?.name || "";
+      nameIn.readOnly = Boolean(template);
+      const [from, to] = (template?.time || "").split(/\s*[-–—]\s*/);
+      const timeInput = value => value?.trim().replace(".", ":").padStart(5, "0") || "";
+      fromIn.value = timeInput(from);
+      toIn.value = timeInput(to);
+      amountIn.value = template?.amount || "0";
+
+      deptSel.querySelector('[data-current-dept]')?.remove();
+      if (!template) {
+        deptSel.selectedIndex = 0;
+      } else {
+        const dept = template.dept.trim();
+        const tokens = deptTokens(dept);
+        const choice = tokens.length === 0 || tokens.includes(TEXT_ALL) ? TEXT_ALL :
+          tokens.length === 1 && tokens[0] === TEXT_TP ? TEXT_TP : dept;
+        if (!deptOptions.some(([value]) => value === choice)) {
+          const option = el("option", null, deptLabel(dept));
+          option.value = choice;
+          option.dataset.currentDept = "true";
+          deptSel.appendChild(option);
+        }
+        deptSel.value = choice;
+      }
+      setFormOpen(true);
+      (template ? deptSel : nameIn).focus({ preventScroll: true });
+      form.scrollIntoView({ block: "nearest" });
+    }
+    addToggle.addEventListener("click", () => openForm());
+    cancel.addEventListener("click", () => setFormOpen(false));
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const name = nameIn.value.trim();
       if (!name) return;
-      if (templates.some((t) => t.name.trim().toUpperCase() === name.toUpperCase())) {
+      if (!editing && templates.some((t) => t.name.trim().toUpperCase() === name.toUpperCase())) {
         if (!confirm(`Шаблон «${name}» уже есть. Обновить его?`)) return;
       }
       submit.disabled = true;
       try {
         await apiClient.call("settings.shift.save", {
+          ...(editing && { item_id: editing.itemId }),
           name,
           time: `${fromIn.value}-${toIn.value}`,
           amount: Number(amountIn.value || 0),

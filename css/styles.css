@@ -4409,6 +4409,13 @@ body.swap-mode .app-toast {
   border-radius: 8px;
   background: var(--bg-alt, #ededf0);
 }
+.settings-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .settings-item-info {
   min-width: 0;
   overflow-wrap: anywhere;

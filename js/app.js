@@ -11,7 +11,7 @@ import { createCatalogsService } from "./services/catalogsService.js";
 import { createVacationsService } from "./services/vacationsService.js?v=7";
 import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
-import { createSettingsPanel } from "./settings.js?v=5";
+import { createSettingsPanel } from "./settings.js?v=6";
 import { createVacationReport } from "./vacationReport.js?v=7";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
