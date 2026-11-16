@@ -153,6 +153,27 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       .map((role) => role.id);
   }
 
+  async function canManageAllVacations(session) {
+    return session.roles?.map(Number).includes(NON_TP_EDITOR_ROLE) &&
+      (await rolesOf(session.memberId)).map(Number).includes(NON_TP_EDITOR_ROLE);
+  }
+
+  function vacationPeriod(start, days, type = 'due_date_time') {
+    const date = new Date(start + 'T00:00:00Z');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || Number.isNaN(date.getTime()) ||
+        date.toISOString().slice(0, 10) !== start) {
+      throw Object.assign(new Error('Некорректная дата начала отпуска'), { status: 400 });
+    }
+    if (!Number.isInteger(days) || days < 1 || days > MAX_VACATION_DAYS) {
+      throw Object.assign(new Error('Длительность отпуска — от 1 до ' + MAX_VACATION_DAYS + ' дней'), { status: 400 });
+    }
+    return {
+      id: V.period,
+      value: type === 'due_date' ? start : date.toISOString().replace('.000Z', 'Z'),
+      duration: (type === 'due_date' ? days : days - 1) * 1440,
+    };
+  }
+
   function permissionsFor(roles) {
     const ids = (roles || []).map(Number);
     const editAll = EDIT_ALL_ROLES.some((r) => ids.includes(r));
@@ -833,17 +854,24 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       const line = LINES.find((l) => l.key === p.line);
       // Админ и менеджер по персоналу добавляют отпуск любому сотруднику (отдел можно не указывать)
       const isHr = isAdminRoles(session.roles) || (session.roles || []).map(Number).includes(HR_ROLE);
-      const canVac = isHr || (line && (perms[line.key] === 'edit' || (perms[line.key] === 'self' && Number(p.employee_id) === Number(session.memberId))));
-      if (!canVac) return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого подразделения');
+      const canByLine = line && (perms[line.key] === 'edit' || (perms[line.key] === 'self' &&
+        Number(p.employee_id) === Number(session.memberId)));
+      const manageAll = !isHr && !canByLine && await canManageAllVacations(session);
+      if (!isHr && !canByLine && !manageAll) return fail(403, 'FORBIDDEN', 'Нет прав на редактирование этого подразделения');
       const employeeId = Number(p.employee_id);
       const days = Number(p.days);
       const start = String(p.start_date || '');
       if (!Number.isInteger(employeeId) || employeeId <= 0) return fail(400, 'BAD_REQUEST', 'Не указан сотрудник');
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || Number.isNaN(Date.parse(`${start}T00:00:00Z`))) {
-        return fail(400, 'BAD_REQUEST', 'Некорректная дата начала отпуска');
-      }
-      if (!Number.isInteger(days) || days < 1 || days > MAX_VACATION_DAYS) {
-        return fail(400, 'BAD_REQUEST', `Длительность отпуска — от 1 до ${MAX_VACATION_DAYS} дней`);
+      const period = vacationPeriod(start, days);
+      if (period.duration === 0) delete period.duration;
+
+      let employeeDepartment;
+      if (manageAll) {
+        const { members } = await membersWithDepartments();
+        const employee = members.find(member => Number(member.id) === employeeId &&
+          !member.banned && (!member.type || member.type === 'user'));
+        if (!employee) return fail(404, 'NOT_FOUND', 'Сотрудник не найден');
+        employeeDepartment = String(employee.department_name || '').trim().toUpperCase();
       }
 
       // choice_id отдела берём из описания формы по названию (кеш 10 минут)
@@ -857,11 +885,12 @@ export async function handleAction({ request, store, telephony, lunches, schedul
         }
         store.vacDeptChoices = { at: now, map: choices };
       }
-      const choiceId = line ? choices[line.name.toUpperCase()] : null;
-      if (line && choiceId == null) return fail(502, 'BACKEND_ERROR', `В форме отпусков нет отдела «${line.name}»`);
+      let choiceId = manageAll ? choices[employeeDepartment] : line ? choices[line.name.toUpperCase()] : null;
+      if (manageAll && choiceId == null && (await rolesOf(employeeId)).map(Number).includes(TP_MEMBER_ROLE)) {
+        choiceId = choices[TP_DEPARTMENT.departmentName.toUpperCase()];
+      }
+      if (!manageAll && line && choiceId == null) return fail(502, 'BACKEND_ERROR', `В форме отпусков нет отдела «${line.name}»`);
 
-      const period = { id: V.period, value: `${start}T00:00:00Z` };
-      if (days > 1) period.duration = (days - 1) * 1440;
       const r = await pyrus('POST', '/v4/tasks', {
         form_id: FORM_VACATIONS,
         fields: [
@@ -873,6 +902,30 @@ export async function handleAction({ request, store, telephony, lunches, schedul
         ],
       });
       return ok({ task: (r && r.task) || null });
+    }
+
+    if (action === 'vacation.update') {
+      if (!(await canManageAllVacations(session))) {
+        return fail(403, 'FORBIDDEN', 'Нет прав на изменение периода отпуска');
+      }
+      const taskId = Number(p.task_id);
+      if (!Number.isInteger(taskId) || taskId <= 0) return fail(400, 'BAD_REQUEST', 'Не указан отпуск');
+      const result = await pyrus('GET', '/v4/tasks/' + taskId);
+      const task = result.task || result;
+      if (task.form_id !== FORM_VACATIONS) return fail(403, 'FORBIDDEN', 'Задача не из формы отпусков');
+
+      const start = String(p.start_date || '');
+      const days = Number(p.days);
+      const type = findFieldDeep(task.fields || [], V.period)?.type;
+      const fields = [
+        vacationPeriod(start, days, type),
+        { id: V.year, value: start.slice(0, 4) },
+        { id: V.days, value: days },
+      ];
+      const updated = await pyrus('POST', '/v4/tasks/' + taskId + '/comments', { field_updates: fields });
+      // Pyrus может вернуть комментарий без задачи. В этом случае перечитываем её по ID.
+      const saved = updated.task || await pyrus('GET', '/v4/tasks/' + taskId).then(data => data.task || data);
+      return ok({ task: saved });
     }
 
     if (action === 'vacation.delete') {
@@ -887,7 +940,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       const vacPerson = Number(findFieldDeep(task.fields || [], V.person)?.value?.id) || null;
       const isHrDel = isAdminRoles(session.roles) || (session.roles || []).map(Number).includes(HR_ROLE);
       const canDelVac = isHrDel || (line && (perms[line.key] === 'edit' || (perms[line.key] === 'self' && vacPerson === Number(session.memberId))));
-      if (!canDelVac) return fail(403, 'FORBIDDEN', 'Нет прав на отдел этого отпуска');
+      if (!canDelVac && !(await canManageAllVacations(session))) return fail(403, 'FORBIDDEN', 'Нет прав на отдел этого отпуска');
       await pyrus('DELETE', `/v4/tasks/${taskId}`);
       return ok({ deletedId: taskId });
     }

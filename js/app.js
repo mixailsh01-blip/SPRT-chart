@@ -8,7 +8,7 @@ import { listenForScheduleChanges } from "./api/scheduleEvents.js";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
-import { createVacationsService } from "./services/vacationsService.js?v=6";
+import { createVacationsService } from "./services/vacationsService.js?v=7";
 import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=5";
@@ -456,6 +456,11 @@ function canOpenSettings() {
 }
 
 // Табель отпусков: админы и роль «менеджер по персоналу»
+function canManageAllVacations() {
+  const role = String(config.auth.permissions.nonTpScheduleEditorRole);
+  return state.auth.roles?.some(item => String(item?.id ?? item) === role) === true;
+}
+
 function canOpenVacationReport() {
   if (isAdminUser()) return true;
   const roles = Array.isArray(state.auth.roles) ? state.auth.roles : [];
@@ -2511,7 +2516,7 @@ function renderQuickTemplateOptions() {
 
   const isAll = state.ui.currentLine === "ALL";
   const canEditShifts = canEditLine(state.ui.currentLine);
-  const currentLineTemplates = !isAll || canEditShifts ? getCurrentLineTemplates() : [];
+  const currentLineTemplates = canEditShifts ? getCurrentLineTemplates() : [];
   const prevSelected = state.quickMode.templateId;
 
   quickTemplateSelectEl.innerHTML = "";
@@ -2534,11 +2539,11 @@ function renderQuickTemplateOptions() {
   // любому сотруднику вкладки; во «ВСЕ» — только самому себе, и только если у вас есть
   // редакторские права ровно на одну из вкладок (иначе непонятно, какой отдел указать).
   const ownLine = getOwnEditableLineKey();
-  const canVacation = isAll ? Boolean(ownLine) : true;
+  const canVacation = canManageAllVacations() || (isAll ? Boolean(ownLine) : canEditShifts);
   if (canVacation) {
     const vacOption = document.createElement("option");
     vacOption.value = QUICK_VACATION_VALUE;
-    vacOption.textContent = isAll ? "🏖 Отпуск (себе)" : "🏖 Отпуск";
+    vacOption.textContent = isAll && !canManageAllVacations() ? "🏖 Отпуск (себе)" : "🏖 Отпуск";
     quickTemplateSelectEl.appendChild(vacOption);
   } else if (state.quickMode.vacationMode) {
     state.quickMode.vacationMode = false;
@@ -2547,7 +2552,8 @@ function renderQuickTemplateOptions() {
 
   const delOption = document.createElement("option");
   delOption.value = QUICK_DELETE_VALUE;
-  delOption.textContent = isAll && !canEditShifts ? "🗑 Удалить свой отпуск" : "🗑 Удалить смену / отпуск";
+  delOption.textContent = canEditShifts ? "🗑 Удалить смену / отпуск" :
+    canManageAllVacations() ? "🗑 Удалить отпуск" : "🗑 Удалить свой отпуск";
   quickTemplateSelectEl.appendChild(delOption);
 
   const hasPrev = currentLineTemplates.some((t) => t.id === prevSelected);
@@ -2596,14 +2602,14 @@ function updateQuickModeForLine() {
   const isAll = currentLine === "ALL";
   const ownLine = getOwnEditableLineKey();
   const canEditShifts = canEditLine(currentLine);
-  const canEdit = canEditShifts || (isAll && Boolean(ownLine));
+  const canEdit = canEditShifts || canManageAllVacations() || (isAll && Boolean(ownLine));
   const isCached = state.ui.isScheduleCached;
 
   if (!canEdit && state.quickMode.enabled) {
     state.quickMode.enabled = false;
     updateQuickModeToggleUI();
   }
-  if (isAll && !canEditShifts && state.quickMode.enabled && !state.quickMode.vacationMode && !state.quickMode.deleteMode) {
+  if (!canEditShifts && state.quickMode.enabled && !state.quickMode.vacationMode && !state.quickMode.deleteMode) {
     state.quickMode.enabled = false;
     updateQuickModeToggleUI();
   }
@@ -2611,9 +2617,8 @@ function updateQuickModeForLine() {
   if (quickTemplateSelectEl) {
     quickTemplateSelectEl.disabled = !canEdit;
     quickTemplateSelectEl.title = canEdit
-      ? isAll && !canEditShifts
-        ? "Назначить отпуск самому себе"
-        : "Выберите шаблон, чтобы включить быстрое назначение"
+      ? canEditShifts ? "Выберите шаблон, чтобы включить быстрое назначение" :
+        canManageAllVacations() ? "Управление отпусками" : "Назначить отпуск самому себе"
       : isCached
       ? "Данные загружаются, редактирование временно недоступно"
       : isAll
@@ -2621,7 +2626,7 @@ function updateQuickModeForLine() {
       : `Нет прав на редактирование ${lineLabel}`;
   }
   
-  const noTimes = !canEdit || state.quickMode.deleteMode || state.quickMode.vacationMode;
+  const noTimes = !canEditShifts || state.quickMode.deleteMode || state.quickMode.vacationMode;
   if (quickTimeFromInputEl) {
     quickTimeFromInputEl.disabled = noTimes;
   }
@@ -2656,8 +2661,8 @@ function updateSaveButtonState() {
   const lineLabel = LINE_LABELS[currentLine] || currentLine;
   const canEdit = canEditLine(currentLine);
   // «Панель смены» (мобильная) доступна только во вкладке, где есть права на редактирование
-  document.body.classList.toggle("can-edit-line", Boolean(canEdit));
-  if (!canEdit) document.body.classList.remove("mobile-toolbar-open");
+  document.body.classList.toggle("can-edit-line", canEdit || canManageAllVacations());
+  if (!canEdit && !canManageAllVacations()) document.body.classList.remove("mobile-toolbar-open");
   const changesCount = countChangesForLine(currentLine);
   const isCached = state.ui.isScheduleCached;
   
@@ -3056,10 +3061,9 @@ function formatDateRu(year, monthIndex, day) {
   return `${String(day).padStart(2, "0")}.${String(monthIndex + 1).padStart(2, "0")}.${year}`;
 }
 
-// Удалять с сайта можно отпуск своего отдела (как и смены — только во вкладке с правами).
-// Во «ВСЕ» отдела нет — там можно удалить только свой собственный отпуск.
 function canDeleteVacation(line, vac, employeeId) {
   if (!vac || vac.taskId == null) return false;
+  if (canManageAllVacations()) return true;
   const targetLine = line === "ALL" ? (isOwnEmployeeId(employeeId) ? getOwnEditableLineKey() : null) : line;
   if (!targetLine || (line !== "ALL" && !canEditRow(targetLine, employeeId))) return false;
   const deptName = String(LINE_BY_KEY[targetLine]?.departmentName || LINE_LABELS[targetLine] || "").trim().toUpperCase();
@@ -3107,9 +3111,7 @@ function handleVacationRangeClick({ line, row, day }) {
   }
   state.quickMode.vacationStart = null;
   renderScheduleCurrentLine();
-  // Во «ВСЕ» отдела для записи в Pyrus нет — берём собственный (сюда попадаем,
-  // только если он определён однозначно, см. renderQuickTemplateOptions/updateQuickModeForLine)
-  const submitLine = line === "ALL" ? getOwnEditableLineKey() : line;
+  const submitLine = canManageAllVacations() ? "ALL" : line === "ALL" ? getOwnEditableLineKey() : line;
   if (!submitLine) {
     alert("Не удалось определить ваш отдел для отпуска. Поставьте его во вкладке своего подразделения.");
     return;
@@ -3150,7 +3152,7 @@ async function createVacationForRange(line, row, firstDay, lastDay, submitLine =
   // Показываем отпуск сразу, до ответа сервера; при ошибке — откатываем
   const entry = {
     taskId: null,
-    department: LINE_BY_KEY[submitLine]?.departmentName || LINE_LABELS[submitLine] || "",
+    department: submitLine === "ALL" ? "" : LINE_BY_KEY[submitLine]?.departmentName || "",
     startDay: firstDay,
     endDayExclusive: lastDay + 1,
     startLabel: fromLabel,
@@ -3217,8 +3219,9 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, cellEl }) {
     return;
   }
 
-  if (line === "ALL" && state.quickMode.enabled && state.quickMode.vacationMode) {
-    if (isOwnEmployeeId(row.employeeId) && getOwnEditableLineKey()) {
+  if (state.quickMode.enabled && state.quickMode.vacationMode &&
+      (line === "ALL" || canManageAllVacations())) {
+    if (canManageAllVacations() || (isOwnEmployeeId(row.employeeId) && getOwnEditableLineKey())) {
       handleVacationRangeClick({ line, row, day });
     }
     return;
@@ -5344,10 +5347,12 @@ function openBirthdayPopover(context, anchorEl) {
 
 function openVacationPopover(context, anchorEl) {
   const { line, row, vac, employeeName, startLabel, endLabel } = context;
+  const canEdit = vac.taskId != null && canManageAllVacations();
   const canDelete = canDeleteVacation(line, vac, row.employeeId);
-  const note = canDelete
-    ? "Отпуск хранится в Pyrus («График отпусков»). Удаление сразу уходит в Pyrus."
-    : "Отпуск загружается из Pyrus («График отпусков»). Изменить его можно во вкладке его отдела или в Pyrus.";
+  const isoFromLabel = label => {
+    const match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(label);
+    return match ? [match[3], match[2], match[1]].join("-") : "";
+  };
 
   shiftPopoverEl.innerHTML = `
     <div class="shift-popover-header">
@@ -5361,13 +5366,25 @@ function openVacationPopover(context, anchorEl) {
     <div class="shift-popover-body">
       <div class="shift-popover-section">
         <div class="shift-popover-section-title">Период</div>
-        <div class="field-row"><label>с:</label><div>${startLabel}</div></div>
-        <div class="field-row"><label>по:</label><div>${endLabel}</div></div>
+        ${canEdit ? `
+          <form id="vacation-dates-form">
+            <div class="field-row"><label for="vacation-start-date">Начало</label>
+              <input type="date" id="vacation-start-date" required>
+            </div>
+            <div class="field-row"><label for="vacation-end-date">Окончание</label>
+              <input type="date" id="vacation-end-date" required>
+            </div>
+          </form>
+          <div class="shift-popover-note" role="status" id="vacation-edit-status"></div>
+        ` : `
+          <div class="field-row"><label>Начало</label><div>${startLabel}</div></div>
+          <div class="field-row"><label>Окончание</label><div>${endLabel}</div></div>
+        `}
       </div>
-      <div class="shift-popover-note">${note}</div>
     </div>
 
     <div class="shift-popover-footer">
+      ${canEdit ? '<button class="btn primary" type="submit" form="vacation-dates-form">Сохранить</button>' : ""}
       ${canDelete ? '<button class="btn btn-danger" type="button" id="shift-btn-delete-vacation">Удалить отпуск</button>' : ""}
       <button class="btn" type="button" id="shift-btn-close-vacation">Закрыть</button>
     </div>
@@ -5380,6 +5397,48 @@ function openVacationPopover(context, anchorEl) {
   const closeBtn = shiftPopoverEl.querySelector(".shift-popover-close");
   const closeBtn2 = shiftPopoverEl.querySelector("#shift-btn-close-vacation");
   const deleteBtn = shiftPopoverEl.querySelector("#shift-btn-delete-vacation");
+
+  if (canEdit) {
+    const form = shiftPopoverEl.querySelector("#vacation-dates-form");
+    const startInput = shiftPopoverEl.querySelector("#vacation-start-date");
+    const endInput = shiftPopoverEl.querySelector("#vacation-end-date");
+    const submit = shiftPopoverEl.querySelector('button[form="vacation-dates-form"]');
+    const status = shiftPopoverEl.querySelector("#vacation-edit-status");
+    startInput.value = isoFromLabel(startLabel);
+    endInput.value = isoFromLabel(endLabel);
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const days = (endInput.valueAsNumber - startInput.valueAsNumber) / 86400000 + 1;
+      if (!Number.isInteger(days) || days < 1 || days > 90) {
+        status.textContent = "Укажите период от 1 до 90 дней.";
+        return;
+      }
+      if (startInput.value === isoFromLabel(startLabel) && endInput.value === isoFromLabel(endLabel)) {
+        closeShiftPopover();
+        return;
+      }
+
+      submit.disabled = true;
+      if (deleteBtn) deleteBtn.disabled = true;
+      status.textContent = "Сохраняем в Pyrus…";
+      try {
+        const result = await apiClient.call("vacation.update", {
+          task_id: vac.taskId,
+          start_date: startInput.value,
+          days,
+        });
+        vacationsService.applyUpdated(result.task);
+        if (form.isConnected) closeShiftPopover();
+        await refreshVacationsForCurrentMonth();
+      } catch (error) {
+        status.textContent = "Не удалось сохранить отпуск. " + error.message;
+      } finally {
+        submit.disabled = false;
+        if (deleteBtn) deleteBtn.disabled = false;
+      }
+    });
+  }
 
   const doClose = () => closeShiftPopover();
   if (deleteBtn) {

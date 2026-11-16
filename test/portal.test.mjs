@@ -281,3 +281,72 @@ test('роль 1331872 редактирует смены вне ТП из вкл
   assert.equal((await save('create', create(other.id))).status, 403);
   assert.equal(writes.length, 2);
 });
+
+test('роль 1331872 может добавлять, переносить и удалять отпуска сотрудников ТП', async () => {
+  const db = openDatabase(':memory:');
+  const employee = { id: 20, first_name: 'Павел', last_name: 'Иванов' };
+  let granted = true;
+  let task = { id: 77, form_id: 2470368, fields: [
+    { id: 1, type: 'due_date_time', value: '2026-11-16T00:00:00Z', duration: 4320 },
+    { id: 3, type: 'person', value: { id: employee.id } },
+    { id: 4, value: { choice_names: ['ТП'] } },
+    { id: 7, type: 'checkmark', value: 'checked' },
+  ] };
+  const writes = [];
+  const pyrus = async (method, path, body) => {
+    if (path === '/v4/members') return { members: [member, employee] };
+    if (path === '/v4/contacts') return { organizations: [] };
+    if (path === '/v4/roles') return { roles: [
+      { id: 1331872, member_ids: granted ? [member.id] : [] },
+      { id: 1329812, member_ids: [employee.id] },
+    ] };
+    if (path === '/v4/forms/2470368') return { fields: [
+      { id: 4, info: { options: [{ choice_value: 'ТП', choice_id: 1 }] } },
+    ] };
+    if (path === '/v4/tasks' && method === 'POST' && body.form_id === 2472006) return { task: { id: 900 } };
+    if (path === '/v4/tasks' && method === 'POST' && body.form_id === 2470368) {
+      writes.push(body.fields);
+      return { task: { id: 78, fields: body.fields } };
+    }
+    if (path === '/v4/tasks/77' && method === 'GET') return { task };
+    if (path === '/v4/tasks/77/comments' && method === 'POST') {
+      writes.push(body.field_updates);
+      const updates = new Map(body.field_updates.map(field => [field.id, field]));
+      task = { ...task, fields: task.fields.map(field => ({ ...field, ...updates.get(field.id) })) };
+      return { task };
+    }
+    if (path === '/v4/tasks/77' && method === 'DELETE') return {};
+    if (path === '/v4/tasks/99' && method === 'GET') return { task: { id: 99, form_id: 2470373 } };
+    throw new Error('Unexpected API: ' + method + ' ' + path);
+  };
+  const mail = [];
+  const portal = createPortal({
+    db, pyrus, env, sendMail: async message => { mail.push(message); }, mango: async () => {},
+  });
+  await portal.act(request('auth.start', { identifier: member.email }));
+  const code = mail[0].text.match(/Код: (\d{6})/)[1];
+  const login = await portal.act(request('auth.verify', { identifier: member.email, code }));
+  const token = login.body.data.sessionToken;
+  const act = (action, params) => portal.act(request(action, params, token));
+  const period = { task_id: 77, start_date: '2026-12-01', days: 1 };
+
+  const created = await act('vacation.create', { line: 'ALL', employee_id: employee.id, start_date: '2026-11-23', days: 2 });
+  assert.equal(created.status, 200);
+  assert.deepEqual(writes[0].find(field => field.id === 4).value.choice_ids, [1]);
+  const updated = await act('vacation.update', period);
+  assert.equal(updated.status, 200);
+  assert.deepEqual(writes[1], [
+    { id: 1, value: '2026-12-01T00:00:00Z', duration: 0 },
+    { id: 2, value: '2026' }, { id: 5, value: 1 },
+  ]);
+  assert.equal(updated.body.data.task.fields.find(field => field.id === 7).value, 'checked');
+  assert.equal((await act('vacation.update', { ...period, start_date: '2026-02-30' })).status, 400);
+  assert.equal((await act('vacation.update', { ...period, task_id: 99 })).status, 403);
+  assert.equal((await act('vacation.approve', { task_id: 77, approved: false })).status, 403);
+  assert.equal((await act('vacation.delete', { task_id: 77 })).status, 200);
+
+  granted = false;
+  assert.equal((await act('vacation.update', period)).status, 403);
+  assert.equal((await act('vacation.delete', { task_id: 77 })).status, 403);
+  assert.equal(writes.length, 2);
+});

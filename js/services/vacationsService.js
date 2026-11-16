@@ -70,7 +70,12 @@ export function createVacationsService({
     if (pruned) persistRecentWrites();
     if (!recentUpserts.size && !recentDeletes.size) return tasks;
     const byId = new Map(tasks.map((t) => [t.id, t]));
-    for (const [id, { task }] of recentUpserts) if (!byId.has(id)) byId.set(id, task);
+    for (const [id, { task, edited }] of recentUpserts) {
+      const current = byId.get(id);
+      const currentAt = Date.parse(current?.last_modified_date);
+      const recentAt = Date.parse(task.last_modified_date);
+      if (!current || (edited && !(currentAt > recentAt))) byId.set(id, task);
+    }
     for (const id of recentDeletes.keys()) byId.delete(id);
     return [...byId.values()];
   }
@@ -82,13 +87,16 @@ export function createVacationsService({
   // Результат vacation.create / vacation.delete — показываем сразу, не дожидаясь реестра.
   // Сохраняем и в localStorage: реестр Pyrus обновляется с задержкой (может быть и после
   // перезагрузки страницы), а без этого только что созданное/удалённое видно только до F5.
-  function applyCreated(task) {
+  function applyUpsert(task, edited) {
     if (!task || task.id == null) return;
-    recentUpserts.set(task.id, { task, at: Date.now() });
+    recentUpserts.set(task.id, { task, edited, at: Date.now() });
     recentDeletes.delete(task.id);
     persistRecentWrites();
     invalidateAll();
   }
+
+  const applyCreated = task => applyUpsert(task, false);
+  const applyUpdated = task => applyUpsert(task, true);
 
   function applyDeleted(taskId) {
     if (taskId == null) return;
@@ -305,5 +313,5 @@ export function createVacationsService({
     return out;
   }
 
-  return { getVacationsForMonth, getVacationsForYear, peekVacationsForMonth, applyCreated, applyDeleted };
+  return { getVacationsForMonth, getVacationsForYear, peekVacationsForMonth, applyCreated, applyUpdated, applyDeleted };
 }
