@@ -1,6 +1,6 @@
 {
   "api": {
-    "baseUrl": "https://n8n.sprt-service.ru/webhook/sprt-chart",
+    "baseUrl": "/api/sprt-chart",
     "timeoutMs": 30000
   },
   "auth": {

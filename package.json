@@ -1,0 +1,16 @@
+{
+  "name": "sprt-chart",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server/main.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "nodemailer": "10.6.0"
+  }
+}

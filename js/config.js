@@ -5,7 +5,6 @@
 
 const DEFAULT_CONFIG = {
   api: {
-    // Один endpoint бэкенда. Сейчас — webhook n8n, потом — сервис в Docker.
     baseUrl: "",
     timeoutMs: 30000,
   },

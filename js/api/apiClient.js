@@ -3,7 +3,6 @@
 // Единственная точка сетевого обмена с бэкендом.
 // Контракт: POST {baseUrl}  body: { action, payload }
 //           Authorization: Bearer <sessionToken> (кроме auth.start / auth.verify)
-// Сейчас бэкенд — webhook n8n, потом — сервис в Docker. Фронт при переезде не меняется.
 // Описание действий: docs/API_CONTRACT.md
 
 import { createLogger } from "../utils/logger.js";

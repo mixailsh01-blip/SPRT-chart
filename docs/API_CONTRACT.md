@@ -9,7 +9,7 @@
 ```
 POST {api.baseUrl}
 Content-Type: application/json
-Authorization: Bearer <sessionToken>     # для всех action, кроме auth.start / auth.verify
+Authorization: Bearer <sessionToken>     # для всех action, кроме auth.start / auth.verify / auth.link
 
 { "action": "<имя>", "payload": { ... } }
 ```
@@ -24,36 +24,19 @@ Authorization: Bearer <sessionToken>     # для всех action, кроме au
 HTTP-статусы: `200` — успех, `400` — ошибка данных, `401` — нет/истекла сессия
 (фронт сразу показывает экран входа), `403` — нет прав, `404` — не найдено, `429` — лимит.
 
-Бэкенд обязан отдавать CORS-заголовки для домена фронта
-(`Access-Control-Allow-Origin`, `Access-Control-Allow-Headers: Content-Type, Authorization`) и отвечать на `OPTIONS`.
-
 ## Секреты
 
-Ключ бота Pyrus (`PYRUS_LOGIN`, `PYRUS_SECURITY_KEY`), ключи Mango Office (`MANGO_API_KEY`, `MANGO_API_SALT`)
-и секрет для хэширования кодов (`AUTH_CODE_SECRET`) живут **только на бэкенде**:
-в credentials n8n сейчас, в `.env` контейнера потом. Во фронт и в git они не попадают.
+Доступы к Pyrus, Mango и SMTP задаются в \`.env\` на сервере. Секрет для HMAC кодов и сессий генерируется при первом запросе и хранится в SQLite.
 
 ---
 
 ## auth.start — запросить код
 
-Вход: `{ provider: "mango", identifierType: "phone" | "email", identifier: "79001234567" }`
+Вход — \`{ provider: "email", identifierType: "email", identifier: "user@example.com" }\`.
 
-Бэкенд:
-1. Находит сотрудника в Pyrus (`GET /v4/members`) по телефону/email. Нет — `404 NOT_FOUND`.
-2. Проверяет лимит: не чаще 1 раза в `resendTimerSec` (60 с) → иначе `429 RATE_LIMITED` + `retryAfterSec`.
-3. Генерирует 6-значный код, хранит **только хэш** (HMAC-SHA256 с `AUTH_CODE_SECRET`), TTL 5–10 мин, 5 попыток.
-4. Отправляет код через провайдера (для `mango` — см. ниже) и **дублирует его в Pyrus**: создаёт задачу на
-   форме «Уведомления сотрудникам» (`form_id 2472006`) — поле 8 «Тип» (`choice_ids: [1]`, «Авторизация в
-   график»), поле 6 «Почта» = email, поле 9 «Пин-код» = код, поле 3 «Сотрудник» = `{ id: memberId }`.
-   Ссылку собирает сама кнопка поля 7 «Войти в график» (`custom_action: CustomUrl`, шаблон
-   `.../?li_email=${email}&li_code=${password}`) — бэкенд пишет только «сырые» значения email/кода, без
-   ручного кодирования (Pyrus кодирует каждую подстановку сам). Письмо иногда попадает в спам, а уведомление
-   в Pyrus сотрудник видит сразу. Созданная задача сразу записывается в `sprt_notify_sent`, чтобы воркфлоу
-   «SPRT: повторная отправка доступа» (`docs/n8n/notify-resend-access.workflow.js`) не обработал её повторно
-   и не зациклил рассылку.
+Бэкенд ищет сотрудника в Pyrus, ограничивает повторную отправку до одного раза в минуту, генерирует код и одноразовую ссылку. Код действует 5 минут, доступно 5 попыток. Сотрудник получает письмо и уведомление в Pyrus. При создании уведомления поле 9 формы \`2472006\` содержит токен ссылки.
 
-Выход: `{ challengeId: "ch_...", ttlSec: 300 }`
+Выход — \`{ challengeId: "user@example.com", ttlSec: 300 }\`.
 
 ## auth.verify — проверить код, выдать сессию
 
@@ -82,12 +65,7 @@ HTTP-статусы: `200` — успех, `400` — ошибка данных, 
 
 ## Вход по ссылке из письма (magic link)
 
-Письмо с кодом (узел «Письмо с кодом» в `docs/n8n-api-node.js` / workflow SPRT-chart API) кроме самого кода
-содержит кнопку «Войти одним кликом» — ссылку вида
-`https://mixailsh01-blip.github.io/SPRT-chart/?li_email={email}&li_code={code}`. Фронт (`js/app.js`,
-`tryMagicLinkLogin()`) при загрузке страницы читает `li_email`/`li_code` из query-строки, сразу вызывает
-`auth.verify` (без предварительного `auth.start` — код уже выписан) и убирает параметры из URL. Код неверный
-или истёк — просто показывается обычный экран входа с уже подставленным email.
+Письмо содержит ссылку вида \`https://portal.sprt-service.ru/?li={token}\`. Интерфейс извлекает токен, убирает его из URL и вызывает \`auth.link\` с \`{ token }\`. Результат совпадает с \`auth.verify\`.
 
 ## auth.logout
 
@@ -252,9 +230,7 @@ HTTP-статусы: `200` — успех, `400` — ошибка данных, 
 `status`: `scheduled` | `active` | `returned` | `auto`. На сайте — кнопка «🍽 Обеды» в шапке (счётчик тех, кто сейчас
 на обеде, по клику — список на сегодня) и значок 🍽 у имени в графике, пока сотрудник на обеде. Обновление — раз в минуту.
 
-`lunch.list` обрабатывает отдельный узел «Обеды: список» (`docs/n8n/lunch-list-node.js`) между «API» и «Нужно письмо?».
 
-Код узла «API» воркфлоу n8n с этими действиями — `docs/n8n-api-node.js`, таймера обедов — `docs/n8n/lunch-timer.workflow.js`.
 
 ---
 
