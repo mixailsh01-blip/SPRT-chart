@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { handleAction } from './actions.mjs';
+import { handleAction, SCHEDULE_REGISTER_PATH } from './actions.mjs';
 import { createAutomations } from './automations.mjs';
+import { findSession } from './sessions.mjs';
 
 const MINUTE = 60_000;
+const RECENT_UPDATE_MS = 30 * MINUTE;
 
 export function createPortal({ db, pyrus, mango, sendMail, env }) {
   const store = db.read('auth') || {};
+  const scheduleListeners = new Set();
   let pending = Promise.resolve();
   let lastSync = 0;
   let requestedSync = 0;
@@ -20,20 +23,58 @@ export function createPortal({ db, pyrus, mango, sendMail, env }) {
 
   const jobs = createAutomations({ db, pyrus, mango, sendMail, env });
 
+  async function readWithRecentUpdates(method, path, body) {
+    const data = await pyrus(method, path, body);
+    if (method !== 'GET' || path !== SCHEDULE_REGISTER_PATH || !Array.isArray(data?.tasks)) return data;
+    const tasks = new Map(data.tasks.map(task => [String(task.id), task]));
+    const oldest = Date.now() - RECENT_UPDATE_MS;
+    for (const update of db.schedule_updates.all()) {
+      if (update.at < oldest) continue;
+      const id = String(update.id);
+      if (!update.task) {
+        tasks.delete(id);
+        continue;
+      }
+      const registered = tasks.get(id);
+      const newerInRegister = registered?.last_modified_date &&
+        (!update.task.last_modified_date || Date.parse(registered.last_modified_date) > Date.parse(update.task.last_modified_date));
+      if (!newerInRegister) tasks.set(id, update.task);
+    }
+    return { ...data, tasks: [...tasks.values()] };
+  }
+
   async function action(request) {
     const result = await handleAction({
-      request, store, pyrus, telephony: db.telephony.all(),
+      request, store, pyrus: readWithRecentUpdates, telephony: db.telephony.all(),
       lunches: db.lunches.all(), schedules: db.schedules.all(),
     });
+    const resultData = result.body?.data;
+    const source = request.body.action;
+    const scheduleChanged = (source === 'schedule.save' &&
+      Boolean(resultData?.created || resultData?.edited || resultData?.deleted)) ||
+      (source === 'schedule.swap' && resultData?.swapped === true);
     db.transaction(() => {
       db.write('auth', { codes: store.codes, sessions: store.sessions, secret: store.secret });
       for (const row of result.telUpdates || []) db.telephony.put(row.task_id, row);
       for (const id of result.body?.data?.deletedIds || []) db.telephony.remove(id);
+      if (scheduleChanged) {
+        const now = Date.now();
+        for (const update of db.schedule_updates.all()) {
+          if (update.at < now - RECENT_UPDATE_MS) db.schedule_updates.remove(update.id);
+        }
+        for (const task of resultData.tasks || []) {
+          if (task?.id != null) db.schedule_updates.put(task.id, { id: task.id, task, at: now });
+        }
+        for (const id of resultData.deletedIds || []) {
+          db.schedule_updates.put(id, { id, at: now });
+        }
+      }
       for (const row of result.lunchUpdates || []) {
         const id = row.id ?? randomUUID();
         db.lunches.put(id, { ...row, id });
       }
     });
+    if (scheduleChanged) for (const listener of scheduleListeners) listener();
     if (result.mangoSync || result.telUpdates?.length || result.body?.data?.deletedIds?.length) {
       const due = Date.now() + 10_000;
       requestedSync = requestedSync ? Math.min(requestedSync, due) : due;
@@ -86,6 +127,11 @@ export function createPortal({ db, pyrus, mango, sendMail, env }) {
   }
 
   return {
+    isAuthenticated: headers => Boolean(findSession(store, headers)),
+    onScheduleChange(listener) {
+      scheduleListeners.add(listener);
+      return () => scheduleListeners.delete(listener);
+    },
     act: request => serialize(() => action(request)),
     tick: () => serialize(() => tick()),
     pollResends: () => serialize(() => jobs.pollResends(action)),

@@ -24,19 +24,16 @@ export async function cached(key, options, fetcher) {
     return inflight.get(key);
   }
 
-  const promise = (async () => {
-    const value = await fetcher();
-    if (shouldCacheValue) {
+  const promise = Promise.resolve().then(fetcher);
+  inflight.set(key, promise);
+  try {
+    const value = await promise;
+    if (shouldCacheValue && inflight.get(key) === promise) {
       cache.set(key, { value, fetchedAt: Date.now() });
     }
     return value;
-  })();
-
-  inflight.set(key, promise);
-  try {
-    return await promise;
   } finally {
-    inflight.delete(key);
+    if (inflight.get(key) === promise) inflight.delete(key);
   }
 }
 

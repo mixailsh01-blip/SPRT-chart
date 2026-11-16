@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createPortal } from '../server/portal.mjs';
+import { createScheduleEvents } from '../server/schedule-events.mjs';
 import { openDatabase } from '../server/database.mjs';
 import { mangoGroups, scheduleRows } from '../server/routing.mjs';
 
@@ -136,4 +138,67 @@ test('просроченный обед остаётся активным до �
   assert.equal(mail.filter(message => message.to === 'manager@example.test').length, 1);
   await portal.act(request('lunch.end', {}, token));
   assert.equal(db.lunches.all()[0].status, 'returned');
+});
+
+test('подписчик видит сохранение и удаление до обновления реестра Pyrus', async () => {
+  const db = openDatabase(':memory:');
+  const editor = { ...member, roles: [] };
+  let registeredTasks = [];
+  let shift;
+  const pyrus = async (method, path, body) => {
+    if (path === '/v4/members') return { members: [editor] };
+    if (path === '/v4/roles') return { roles: [{ id: 1331784, member_ids: [editor.id] }] };
+    if (path === '/v4/catalogs/309670') return { items: [{ item_id: 5, values: ['ТП'] }] };
+    if (path === '/v4/forms/2470373/register') return structuredClone({ tasks: registeredTasks });
+    if (path === '/v4/tasks' && method === 'POST' && body.form_id === 2472006) return { task: { id: 80 } };
+    if (path === '/v4/tasks' && method === 'POST') {
+      shift = { id: 91, form_id: body.form_id, fields: body.fields, last_modified_date: '2026-11-16T12:00:00Z' };
+      return { task: structuredClone(shift) };
+    }
+    if (path === '/v4/tasks/91' && method === 'GET') return { task: structuredClone(shift) };
+    if (path === '/v4/tasks/91' && method === 'DELETE') return {};
+    throw new Error('Unexpected API: ' + method + ' ' + path);
+  };
+  const mail = [];
+  const services = { db, env, pyrus, mango: async () => {}, sendMail: async message => { mail.push(message); } };
+  const portal = createPortal(services);
+  await portal.act(request('auth.start', { identifier: editor.email }));
+  const code = mail[0].text.match(/Код: (\d{6})/)[1];
+  const loggedIn = await portal.act(request('auth.verify', { identifier: editor.email, code }));
+  const token = loggedIn.body.data.sessionToken;
+  const events = createScheduleEvents(portal);
+  const fragments = [];
+  const connection = new EventEmitter();
+  connection.writeHead = (_status, headers) => {
+    assert.match(headers['Content-Type'], /^text\/event-stream/);
+  };
+  connection.write = chunk => { fragments.push(chunk); return true; };
+  connection.end = () => connection.emit('close');
+  assert.equal(events.open({ headers: {} }, connection), false);
+  assert.equal(events.open({ headers: { authorization: 'Bearer ' + token } }, connection), true);
+
+  const register = request('pyrus.request', { path: '/v4/forms/2470373/register' }, token);
+  try {
+    const save = await portal.act(request('schedule.save', { changes: { create: { task: [{
+      department_item_id: 5, employee_id: editor.id, item_id: 20,
+      start: '2026-11-17T05:00:00Z', duration: 540, telephony: false,
+    }] } } }, token));
+    assert.equal(save.body.data.created, 1);
+    assert.equal(fragments.length, 2);
+    assert.match(fragments.at(-1), /^event: schedule/);
+    const fresh = (await portal.act(register)).body.data.tasks;
+    assert.equal(fresh[0].id, shift.id);
+    assert.equal(fresh[0].telephony, false);
+
+    registeredTasks = [shift];
+    const deleted = await portal.act(request('schedule.save', {
+      changes: { deleted: { task: [{ task_id: shift.id }] } },
+    }, token));
+    assert.equal(deleted.body.data.deleted, 1);
+    assert.equal(fragments.length, 3);
+    const restarted = createPortal(services);
+    assert.deepEqual((await restarted.act(register)).body.data.tasks, []);
+  } finally {
+    events.close();
+  }
 });

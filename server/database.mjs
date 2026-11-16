@@ -4,7 +4,7 @@ export function openDatabase(filename) {
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
   db.exec('CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-  const names = ['schedules', 'telephony', 'lunches', 'mango_users', 'roster', 'notifications'];
+  const names = ['schedules', 'telephony', 'lunches', 'mango_users', 'roster', 'notifications', 'schedule_updates'];
   for (const name of names) {
     db.exec('CREATE TABLE IF NOT EXISTS ' + name + ' (id TEXT PRIMARY KEY, data TEXT NOT NULL)');
   }

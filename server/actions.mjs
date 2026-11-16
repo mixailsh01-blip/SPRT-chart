@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { findSession } from './sessions.mjs';
 
 function listLunches(lunches, now) {
   const LOCAL_OFFSET_MS = 240 * 60 * 1000;
@@ -26,6 +27,7 @@ function listLunches(lunches, now) {
 
 // ---------- настройки ----------
 const FORM_SCHEDULE = 2470373;
+export const SCHEDULE_REGISTER_PATH = `/v4/forms/${FORM_SCHEDULE}/register`;
 const FORM_VACATIONS = 2470368;
 const CAT_SHIFTS = 309671;
 const CAT_DEPARTMENTS = 309670;
@@ -136,16 +138,6 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       else perms[line.key] = 'view';
     }
     return perms;
-  }
-
-  function currentSession() {
-    const h = request.headers;
-    const auth = String(h.authorization || h.Authorization || '');
-    const token = auth.replace(/^Bearer\s+/i, '').trim();
-    if (!token) return null;
-    const s = store.sessions[hmac(`s:${token}`)];
-    if (!s || s.exp < now) return null;
-    return { ...s, key: hmac(`s:${token}`) };
   }
 
   const isAdminRoles = (roles) => (roles || []).map(Number).some((r) => ADMIN_ROLES.includes(r));
@@ -339,7 +331,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
     }
 
     // ниже — только с сессией
-    const session = currentSession();
+    const session = findSession(store, request.headers, now);
     if (!session) return fail(401, 'UNAUTHORIZED', 'Нет сессии или она истекла');
 
     if (action === 'lunch.list') return ok(listLunches(lunchRows, now));
@@ -367,7 +359,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       }
       const data = await pyrus('GET', path);
       // В реестр графика добавляем флаг телефонии из SQLite
-      if (path === `/v4/forms/${FORM_SCHEDULE}/register` && data && Array.isArray(data.tasks)) data.tasks.forEach(withTelephony);
+      if (path === SCHEDULE_REGISTER_PATH && data && Array.isArray(data.tasks)) data.tasks.forEach(withTelephony);
       return ok(data);
     }
 

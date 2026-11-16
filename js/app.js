@@ -4,11 +4,12 @@
 
 import { config, getConfigValue } from "./config.js?v=9";
 import { createApiClient } from "./api/apiClient.js?v=5";
+import { listenForScheduleChanges } from "./api/scheduleEvents.js";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
 import { createVacationsService } from "./services/vacationsService.js?v=6";
-import { createScheduleService } from "./services/scheduleService.js?v=7";
+import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=5";
 import { createVacationReport } from "./vacationReport.js?v=7";
@@ -873,6 +874,7 @@ function syncLoginBodyState() {
 }
 
 function showLoginScreen() {
+  stopLiveSchedule();
   mainScreenEl?.classList.add("hidden");
   loginScreenEl?.classList.remove("hidden");
   syncLoginBodyState();
@@ -4017,6 +4019,54 @@ btnLunchEl?.addEventListener("click", () => {
 // Загрузка данных
 // -----------------------------
 
+let stopScheduleEvents = null;
+let scheduleRefreshTimer = null;
+let scheduleRefreshRunning = false;
+let scheduleRefreshRequested = false;
+
+function queueLiveScheduleRefresh() {
+  scheduleRefreshRequested = true;
+  if (!scheduleRefreshTimer && !scheduleRefreshRunning) {
+    scheduleRefreshTimer = setTimeout(refreshLiveSchedule, 150);
+  }
+}
+
+async function refreshLiveSchedule() {
+  scheduleRefreshTimer = null;
+  if (!stopScheduleEvents || !state.auth.sessionToken) return;
+  if (autoSave.running || autoSave.timer || autoSaveHeld || state.swap || shiftPopoverEl?.classList.contains("open")) {
+    scheduleRefreshTimer = setTimeout(refreshLiveSchedule, 350);
+    return;
+  }
+  scheduleRefreshRequested = false;
+  scheduleRefreshRunning = true;
+  try {
+    scheduleService.invalidateMonthSchedule();
+    await reloadScheduleForCurrentMonth({ background: true });
+  } finally {
+    scheduleRefreshRunning = false;
+    if (stopScheduleEvents && scheduleRefreshRequested) queueLiveScheduleRefresh();
+  }
+}
+
+function startLiveSchedule() {
+  if (stopScheduleEvents || !state.auth.sessionToken || mainScreenEl?.classList.contains("hidden")) return;
+  stopScheduleEvents = listenForScheduleChanges({
+    apiUrl: API_BASE_URL,
+    getToken: () => state.auth.sessionToken,
+    onChange: queueLiveScheduleRefresh,
+    onUnauthorized: handleSessionExpired,
+  });
+}
+
+function stopLiveSchedule() {
+  stopScheduleEvents?.();
+  stopScheduleEvents = null;
+  clearTimeout(scheduleRefreshTimer);
+  scheduleRefreshTimer = null;
+  scheduleRefreshRequested = false;
+}
+
 async function loadInitialData() {
   startLunchWidget();
   try {
@@ -4050,6 +4100,7 @@ async function loadInitialData() {
     }
     initQuickAssignPanel();
     await reloadScheduleForCurrentMonth();
+    startLiveSchedule();
     updateSaveButtonState();
     updateQuickModeForLine();
 
@@ -4242,7 +4293,7 @@ async function loadShiftsCatalog() {
 const SCHEDULE_RETRY_DELAYS_MS = [3000, 10000, 30000, 60000];
 const scheduleRetry = { timer: null, attempt: 0 };
 
-async function reloadScheduleForCurrentMonth({ showCached = false, isRetry = false } = {}) {
+async function reloadScheduleForCurrentMonth({ showCached = false, isRetry = false, background = false } = {}) {
   const { year, monthIndex } = state.monthMeta;
   const monthKey = getMonthKey(year, monthIndex);
   const isCurrentMonth = () =>
@@ -4254,7 +4305,7 @@ async function reloadScheduleForCurrentMonth({ showCached = false, isRetry = fal
     state.ui.scheduleLoadError = null;
     loadCachedScheduleForMonth(year, monthIndex);
   }
-  const container = document.querySelector(".schedule-container");
+  const container = background ? null : document.querySelector(".schedule-container");
   container?.classList.add("is-loading");
   try {
     await reloadScheduleForCurrentMonthInner();
@@ -4359,7 +4410,7 @@ async function reloadScheduleForCurrentMonthInner() {
     state.prodCalendar = null;
   }
 
-  if (monthKey !== getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex)) {
+  if (!scheduleResult.isLatest || monthKey !== getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex)) {
     return;
   }
 
@@ -4518,7 +4569,7 @@ async function reloadScheduleForCurrentMonthInner() {
   // график один раз, а не дважды (полная перерисовка таблицы — самая тяжёлая операция интерфейса).
   if (!vacationsLoaded) {
     await Promise.race([vacationsPromise, new Promise((resolve) => setTimeout(resolve, 600))]);
-    if (monthKey !== getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex)) return;
+    if (!scheduleResult.isLatest || monthKey !== getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex)) return;
   }
 
   state.originalScheduleByLine = deepClone(scheduleByLine);

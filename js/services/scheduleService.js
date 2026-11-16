@@ -1,4 +1,4 @@
-import { cached, invalidateByPrefix, invalidateKey } from "../cache/requestCache.js";
+import { cached, clearCache, invalidateByPrefix } from "../cache/requestCache.js";
 import { unwrapPyrusData } from "../api/pyrusClient.js";
 
 const SCHEDULE_TTL_MS = 90_000;
@@ -111,12 +111,12 @@ export function createScheduleService({ pyrusClient, formId } = {}) {
     return {
       data: withRecentWrites(data),
       monthKey,
-      isLatest: token === latestToken,
+      get isLatest() { return token === latestToken; },
     };
   }
 
   function invalidateMonthSchedule() {
-    invalidateKey(REGISTER_CACHE_KEY);
+    clearCache(REGISTER_CACHE_KEY);
   }
 
   function invalidateAllSchedule() {

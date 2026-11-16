@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { openDatabase } from './database.mjs';
 import { createMailer, createMango, createPyrus } from './integrations.mjs';
 import { createPortal } from './portal.mjs';
+import { createScheduleEvents } from './schedule-events.mjs';
 
 const env = process.env;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,6 +26,7 @@ const db = openDatabase(env.SQLITE_PATH || 'sprt.sqlite');
 const portal = createPortal({
   db, env, pyrus: createPyrus(env), mango: createMango(env), sendMail: createMailer(env),
 });
+const scheduleEvents = createScheduleEvents(portal);
 const apiError = (code, message) => ({ ok: false, error: { code, message } });
 
 function send(res, status, body) {
@@ -50,6 +52,19 @@ async function serve(req, res) {
   res.setHeader('Referrer-Policy', 'no-referrer');
   const path = new URL(req.url, 'http://localhost').pathname;
   if (path === '/healthz') return send(res, 200, { ok: true });
+  if (path === '/api/sprt-chart/events') {
+    if (req.method !== 'GET') {
+      res.setHeader('Allow', 'GET');
+      return send(res, 405, apiError('METHOD_NOT_ALLOWED', 'Используйте GET'));
+    }
+    if (req.headers.origin && req.headers.origin !== publicUrl.origin) {
+      return send(res, 403, apiError('FORBIDDEN_ORIGIN', 'Недопустимый источник запроса'));
+    }
+    if (!scheduleEvents.open(req, res)) {
+      return send(res, 401, apiError('UNAUTHORIZED', 'Нет сессии или она истекла'));
+    }
+    return;
+  }
   if (path === '/api/sprt-chart') {
     if (req.method !== 'POST') {
       res.setHeader('Allow', 'POST');
@@ -116,5 +131,6 @@ if (resendTimer) poll();
 process.on('SIGTERM', () => {
   clearInterval(syncTimer);
   if (resendTimer) clearInterval(resendTimer);
+  scheduleEvents.close();
   server.close();
 });
