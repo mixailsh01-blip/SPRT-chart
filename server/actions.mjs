@@ -494,7 +494,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       if (!Number.isSafeInteger(employeeId) || employeeId <= 0 ||
           !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(timestamp.getTime()) ||
           timestamp.toISOString().slice(0, 10) !== date ||
-          ![undefined, null, 'day_off', 'sick'].includes(p.absence) ||
+          ![undefined, null, 'day_off', 'sick', 'dismissal'].includes(p.absence) ||
           (p.include_in_export !== undefined && typeof p.include_in_export !== 'boolean') ||
           (p.absence === undefined && p.include_in_export === undefined)) {
         return fail(400, 'BAD_REQUEST', 'Проверьте сотрудника, дату и отметки табеля');

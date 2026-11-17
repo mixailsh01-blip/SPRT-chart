@@ -54,6 +54,8 @@ def cell_style(cell, kind):
         return "vacation", "О"
     if cell == "ОГ":
         return "unpaid", "ОГ"
+    if cell == "У":
+        return "dismissal", "У"
     if cell == "Б":
         return "sick", "Б"
     if cell == "-":

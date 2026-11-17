@@ -1,6 +1,7 @@
 export const ABSENCE_LABELS = {
   day_off: { short: "ОГ", label: "Отгул" },
   sick: { short: "Б", label: "Больничный" },
+  dismissal: { short: "У", label: "Увольнение" },
 };
 
 export function attendanceDate(month, day) {
@@ -81,7 +82,7 @@ export async function reviewAttendance({ month, employees, weekends }, download)
     for (const { person, row, checkbox, values } of choices) {
       const cells = person.cells.slice(0, lastDay);
       const excluded = cells.filter(cell => cell === "-").length;
-      const absences = cells.filter(cell => ["ОТП", "ОГ", "Б"].includes(cell)).length;
+      const absences = cells.filter(cell => ["ОТП", "ОГ", "Б", "У"].includes(cell)).length;
       const minutes = cells.reduce((sum, cell) => sum + (Number.isInteger(cell) ? cell : 0), 0);
       const invalidDay = cells.indexOf(null) + 1;
       const included = cells.length - excluded;

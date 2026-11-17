@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const script = fileURLToPath(new URL('./attendance-report.py', import.meta.url));
-const codes = new Set(['ОТП', 'ОГ', 'Б', 'П', 'В', '-']);
+const codes = new Set(['ОТП', 'ОГ', 'Б', 'У', 'П', 'В', '-']);
 const kinds = new Set([null, 'day', 'long', 'night', 'duty', 'holiday', 'shortened']);
 const validText = (value, max) => typeof value === 'string' && value.length <= max && !/[\x00-\x1f\x7f]/u.test(value);
 const validCell = value => codes.has(value) || (Number.isInteger(value) && value > 0 && value <= 1440);

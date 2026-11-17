@@ -14,7 +14,7 @@ import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=6";
 import { createVacationReport } from "./vacationReport.js?v=7";
-import { ABSENCE_LABELS, attendanceDate, indexAttendance, reviewAttendance } from "./services/attendance.js?v=4";
+import { ABSENCE_LABELS, attendanceDate, indexAttendance, reviewAttendance } from "./services/attendance.js?v=5";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
@@ -5820,6 +5820,7 @@ function openAttendancePopover(employeeId, employeeName, day, anchorEl, { absenc
             <option value="">По графику</option>
             <option value="day_off">Отгул</option>
             <option value="sick">Больничный</option>
+            <option value="dismissal">Увольнение</option>
           </select>
         </div>
         <label class="telephony-toggle">
