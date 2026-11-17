@@ -98,16 +98,17 @@ def render(report):
     employees = report["employees"]
     day_count = len(employees[0]["cells"])
     period_label = "Аванс" if report["period"] == "advance" else "ЗП"
-    margin, name_width, total_width = 27, 166, 49
-    header_y = height - 107
-    table_height = header_y - 109
-    page_size = int(table_height // 18.5)
-    row_height = min(27, table_height / min(len(employees), page_size))
-    text_baseline = row_height / 2 - 3.5
-    grid_width = width - margin * 2
+    margin, name_width, total_width = 27, 144, 44
+    header_y = height - 82
+    table_height = header_y - 98
+    page_size = int(table_height // 18)
+    row_height = 18
+    text_baseline = row_height / 2 - 2.5
+    grid_width = min(width - margin * 2, name_width + total_width + day_count * 25)
     day_width = (grid_width - name_width - total_width) / day_count
     day_left = margin + name_width
-    total_left = width - margin - total_width
+    table_right = margin + grid_width
+    total_left = table_right - total_width
     page_count = (len(employees) + page_size - 1) // page_size
     cells = [cell for employee in employees for cell in employee["cells"]]
     minutes = sum(value for value in cells if type(value) is int)
@@ -115,35 +116,35 @@ def render(report):
 
     for page in range(page_count):
         for index, letter in enumerate("SPRT"):
-            x = margin + index * 20.34
+            x = margin + index * 15.82
             pdf.setFillColor(INK)
-            pdf.roundRect(x, height - 52, 18, 18, 4, fill=1, stroke=0)
+            pdf.roundRect(x, height - 41, 14, 14, 3, fill=1, stroke=0)
             pdf.setFillColor(white)
-            pdf.setFont("DejaVu", 11.5)
-            pdf.drawCentredString(x + 9, height - 47, letter)
+            pdf.setFont("DejaVu", 7.5)
+            pdf.drawCentredString(x + 7, height - 37, letter)
 
         pdf.setFillColor(INK)
-        pdf.setFont("DejaVuBold", 19)
-        pdf.drawString(margin + 94, height - 48, "Табель учёта рабочего времени")
-        pdf.setFont("DejaVuBold", 12)
-        pdf.drawRightString(width - margin, height - 42, month_label)
-        pdf.setFont("DejaVu", 9)
-        pdf.drawRightString(width - margin, height - 57, f"{period_label} · 1-{day_count}")
+        pdf.setFont("DejaVuBold", 14)
+        pdf.drawString(margin + 73, height - 38, "Табель учёта рабочего времени")
+        pdf.setFont("DejaVuBold", 9)
+        pdf.drawRightString(table_right, height - 32, month_label)
+        pdf.setFont("DejaVu", 7.5)
+        pdf.drawRightString(table_right, height - 44, f"{period_label} · 1-{day_count}")
         pdf.setFillColor(MUTED)
-        pdf.setFont("DejaVu", 9)
+        pdf.setFont("DejaVu", 7.5)
         pdf.drawString(
-            margin, height - 72,
+            margin, height - 57,
             f"Сотрудников: {len(employees)}     Учтено часов: {hours(minutes)}     Исключено дней: {excluded}",
         )
 
         pdf.setFillColor(TEAL)
-        pdf.rect(margin, header_y, grid_width, 23, fill=1, stroke=0)
+        pdf.rect(margin, header_y, grid_width, 17, fill=1, stroke=0)
         pdf.setFillColor(white)
-        pdf.setFont("DejaVuBold", 8)
-        pdf.drawString(margin + 7, header_y + 8, "Сотрудник")
+        pdf.setFont("DejaVuBold", 6.5)
+        pdf.drawString(margin + 7, header_y + 5.5, "Сотрудник")
         for day in range(1, day_count + 1):
-            pdf.drawCentredString(day_left + (day - 0.5) * day_width, header_y + 8, str(day))
-        pdf.drawCentredString(total_left + total_width / 2, header_y + 8, "Часы")
+            pdf.drawCentredString(day_left + (day - 0.5) * day_width, header_y + 5.5, str(day))
+        pdf.drawCentredString(total_left + total_width / 2, header_y + 5.5, "Часы")
 
         for index, person in enumerate(employees[page * page_size:(page + 1) * page_size]):
             y = header_y - (index + 1) * row_height
@@ -151,12 +152,12 @@ def render(report):
             pdf.setFillColor(background)
             pdf.rect(margin, y, grid_width, row_height, fill=1, stroke=0)
             pdf.setFillColor(INK)
-            name_lines = simpleSplit(person["name"], "DejaVuBold", 8.5, name_width - 14)
+            name_lines = simpleSplit(person["name"], "DejaVu", 7, name_width - 14)
             if len(name_lines) > 2:
                 name_lines = [name_lines[0], " ".join(name_lines[1:])]
-            name_top = text_baseline + 4.5 if len(name_lines) > 1 else text_baseline
+            name_top = text_baseline + 3.5 if len(name_lines) > 1 else text_baseline
             for line_index, line in enumerate(name_lines):
-                fitted_text(pdf, line, margin + 7, y + name_top - line_index * 9, name_width - 14, 8.5)
+                fitted_text(pdf, line, margin + 7, y + name_top - line_index * 7, name_width - 14, 7)
 
             person_minutes = 0
             for day, cell in enumerate(person["cells"], 1):
@@ -169,34 +170,36 @@ def render(report):
                 pdf.line(x, y, x, y + row_height)
                 work = type(cell) is int
                 pdf.setFillColor(foreground(style))
-                pdf.setFont("DejaVu", 6.3 if work else 7)
+                pdf.setFont("DejaVu", 6)
                 pdf.drawCentredString(x + day_width / 2, y + text_baseline, label)
                 if work:
                     person_minutes += cell
             pdf.setStrokeColor(LINE)
             pdf.line(total_left, y, total_left, y + row_height)
-            pdf.line(margin, y, width - margin, y)
+            pdf.line(margin, y, table_right, y)
             pdf.setFillColor(INK)
-            pdf.setFont("DejaVuBold", 8)
+            pdf.setFont("DejaVuBold", 6.5)
             pdf.drawCentredString(total_left + total_width / 2, y + text_baseline, hours(person_minutes))
 
+        rows_on_page = min(page_size, len(employees) - page * page_size)
+        legend_top = header_y - rows_on_page * row_height - 18
         for item, (kind, label, description) in enumerate(LEGEND):
             column, row = divmod(item, 5)
             x = margin + column * (grid_width / 3)
-            y = 87 - row * 13
+            y = legend_top - row * 11
             pdf.setStrokeColor(LINE)
             pdf.setFillColor(HexColor(COLORS[kind]))
-            pdf.rect(x, y - 2, 23, 11, fill=1, stroke=1)
+            pdf.rect(x, y - 2, 18, 9, fill=1, stroke=1)
             pdf.setFillColor(foreground(kind))
-            pdf.setFont("DejaVuBold", 6.5)
-            pdf.drawCentredString(x + 11.5, y + 1, label)
+            pdf.setFont("DejaVuBold", 6)
+            pdf.drawCentredString(x + 9, y + 1, label)
             pdf.setFillColor(INK)
-            pdf.setFont("DejaVu", 7)
-            pdf.drawString(x + 29, y + 1, description)
-        pdf.setFont("DejaVu", 7)
+            pdf.setFont("DejaVu", 6)
+            pdf.drawString(x + 23, y + 1, description)
+        pdf.setFont("DejaVu", 6)
         pdf.setFillColor(MUTED)
-        pdf.drawString(margin, 15, "В ячейках указаны рабочие часы. Смена 9-18: 8 часов, 9-17: 7 часов с учётом обеда.")
-        pdf.drawRightString(width - margin, 15, f"{page + 1} / {page_count}")
+        pdf.drawString(margin, legend_top - 61, "В ячейках указаны рабочие часы. Смена 9-18: 8 часов, 9-17: 7 часов с учётом обеда.")
+        pdf.drawRightString(table_right, legend_top - 61, f"{page + 1} / {page_count}")
         pdf.showPage()
     pdf.save()
 
