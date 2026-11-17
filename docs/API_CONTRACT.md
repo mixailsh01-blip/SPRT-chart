@@ -145,7 +145,7 @@ HTTP-статусы: `200` — успех, `400` — ошибка данных, 
 
 | field_id | Поле | Значение |
 |---|---|---|
-| 1 | Отпускной период | `"{start_date}T00:00:00Z"`, `duration` = (days − 1) × 1440 (для 1 дня — без duration) |
+| 1 | Отпускной период | Для `due_date` — `start_date` и `duration = String(days × 1440)`. Для `due_date_time` — начало в UTC и `duration = String((days − 1) × 1440)` |
 | 2 | За какой год отпуск | год из `start_date` |
 | 3 | Отпускник | `{ "id": employee_id }` |
 | 4 | Отдел | `{ "choice_ids": [choice_id] }` |

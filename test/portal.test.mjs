@@ -321,6 +321,7 @@ test('роль 1331872 может добавлять, переносить и у
     ] };
     if (path === '/v4/forms/2470373/register') return { tasks: shifts };
     if (path === '/v4/forms/2470368') return { fields: [
+      { id: 1, type: 'due_date' },
       { id: 4, info: { options: [{ choice_value: 'ТП', choice_id: 1 }] } },
     ] };
     if (path === '/v4/tasks' && method === 'POST' && body.form_id === 2472006) return { task: { id: 900 } };
@@ -365,7 +366,12 @@ test('роль 1331872 может добавлять, переносить и у
   assert.equal(refused.status, 409);
   assert.match(refused.body.error.message, /23\.11\.2026/);
   assert.equal(writes.length, 0);
-  assert.equal((await act('vacation.create', { ...vacation, employee_id: office.id })).status, 200);
+  const officeVacation = { ...vacation, employee_id: office.id, start_date: '2026-12-21', days: 7 };
+  assert.equal((await act('vacation.create', officeVacation)).status, 200);
+  assert.deepEqual(writes[0].find(field => field.id === 1), {
+    id: 1, value: '2026-12-21', duration: '10080',
+  });
+  assert.equal(writes[0].find(field => field.id === 5).value, 7);
   writes.length = 0;
 
   shifts = [];
@@ -378,10 +384,15 @@ test('роль 1331872 может добавлять, переносить и у
   const updated = await act('vacation.update', period);
   assert.equal(updated.status, 200);
   assert.deepEqual(writes[1], [
-    { id: 1, value: '2026-12-01T00:00:00Z', duration: 0 },
+    { id: 1, value: '2026-12-01T00:00:00Z', duration: '0' },
     { id: 2, value: '2026' }, { id: 5, value: 1 },
   ]);
   assert.equal(updated.body.data.task.fields.find(field => field.id === 7).value, 'checked');
+  task.fields.find(field => field.id === 1).type = 'due_date';
+  assert.equal((await act('vacation.update', { task_id: 77, start_date: '2026-12-21', days: 7 })).status, 200);
+  assert.deepEqual(writes[2].find(field => field.id === 1), {
+    id: 1, value: '2026-12-21', duration: '10080',
+  });
   assert.equal((await act('vacation.update', { ...period, start_date: '2026-02-30' })).status, 400);
   assert.equal((await act('vacation.update', { ...period, task_id: 99 })).status, 403);
   assert.equal((await act('vacation.approve', { task_id: 77, approved: false })).status, 403);
@@ -390,7 +401,7 @@ test('роль 1331872 может добавлять, переносить и у
   granted = false;
   assert.equal((await act('vacation.update', period)).status, 403);
   assert.equal((await act('vacation.delete', { task_id: 77 })).status, 403);
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 3);
 });
 
 test('администратор меняет доступ шаблона, когда название и ключ в разных колонках', async () => {

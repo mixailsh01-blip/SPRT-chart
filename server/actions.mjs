@@ -160,7 +160,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       (await rolesOf(session.memberId)).map(Number).includes(NON_TP_EDITOR_ROLE);
   }
 
-  function vacationPeriod(start, days, type = 'due_date_time') {
+  function vacationPeriod(start, days, type) {
     const date = new Date(start + 'T00:00:00Z');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || Number.isNaN(date.getTime()) ||
         date.toISOString().slice(0, 10) !== start) {
@@ -169,11 +169,30 @@ export async function handleAction({ request, store, telephony, lunches, schedul
     if (!Number.isInteger(days) || days < 1 || days > MAX_VACATION_DAYS) {
       throw Object.assign(new Error('Длительность отпуска — от 1 до ' + MAX_VACATION_DAYS + ' дней'), { status: 400 });
     }
+    const dateOnly = type === 'due_date';
     return {
       id: V.period,
-      value: type === 'due_date' ? start : date.toISOString().replace('.000Z', 'Z'),
-      duration: (type === 'due_date' ? days : days - 1) * 1440,
+      value: dateOnly ? start : date.toISOString().replace('.000Z', 'Z'),
+      duration: String((dateOnly ? days : days - 1) * 1440),
     };
+  }
+
+  async function vacationFormSettings() {
+    const cached = store.vacationForm;
+    if (cached && cached.at > now - 10 * 60e3) return cached;
+
+    const form = await pyrus('GET', '/v4/forms/' + FORM_VACATIONS);
+    const fields = form.fields || [];
+    const periodType = findFieldDeep(fields, V.period)?.type;
+    if (periodType !== 'due_date' && periodType !== 'due_date_time') {
+      throw Object.assign(new Error('Не удалось определить тип поля «Отпускной период» в Pyrus'), { status: 502 });
+    }
+    const choices = {};
+    for (const option of findFieldDeep(fields, V.department)?.info?.options || []) {
+      choices[String(option.choice_value || '').trim().toUpperCase()] = option.choice_id;
+    }
+    store.vacationForm = { at: now, periodType, choices };
+    return store.vacationForm;
   }
 
   async function assertNoTpVacationOverlap(employeeId, startDate, days, knownTp = false) {
@@ -1009,8 +1028,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       return ok({ member_id: memberId, role: roleKey, granted: grant });
     }
 
-    // Отпуск: задача формы «График отпусков». Период — даты без времени, как их создаёт Pyrus:
-    // value = первый день T00:00:00Z, duration = (дней − 1) × 1440.
+    // Отпуск: задача формы «График отпусков».
     if (action === 'vacation.create') {
       const perms = permissionsFor(session.roles);
       const line = LINES.find((l) => l.key === p.line);
@@ -1024,8 +1042,9 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       const days = Number(p.days);
       const start = String(p.start_date || '');
       if (!Number.isInteger(employeeId) || employeeId <= 0) return fail(400, 'BAD_REQUEST', 'Не указан сотрудник');
-      const period = vacationPeriod(start, days);
-      if (period.duration === 0) delete period.duration;
+      const { choices, periodType } = await vacationFormSettings();
+      const period = vacationPeriod(start, days, periodType);
+      if (period.duration === '0') delete period.duration;
       await assertNoTpVacationOverlap(employeeId, start, days, line?.key === 'TP');
 
       let employeeDepartment;
@@ -1037,17 +1056,6 @@ export async function handleAction({ request, store, telephony, lunches, schedul
         employeeDepartment = String(employee.department_name || '').trim().toUpperCase();
       }
 
-      // choice_id отдела берём из описания формы по названию (кеш 10 минут)
-      let choices = store.vacDeptChoices && store.vacDeptChoices.at > now - 10 * 60e3 ? store.vacDeptChoices.map : null;
-      if (!choices) {
-        const form = await pyrus('GET', `/v4/forms/${FORM_VACATIONS}`);
-        const field = findFieldDeep(form.fields || [], V.department);
-        choices = {};
-        for (const o of (field && field.info && field.info.options) || []) {
-          choices[String(o.choice_value || '').trim().toUpperCase()] = o.choice_id;
-        }
-        store.vacDeptChoices = { at: now, map: choices };
-      }
       let choiceId = manageAll ? choices[employeeDepartment] : line ? choices[line.name.toUpperCase()] : null;
       if (manageAll && choiceId == null && (await rolesOf(employeeId)).map(Number).includes(TP_MEMBER_ROLE)) {
         choiceId = choices[TP_DEPARTMENT.departmentName.toUpperCase()];
@@ -1079,7 +1087,9 @@ export async function handleAction({ request, store, telephony, lunches, schedul
 
       const start = String(p.start_date || '');
       const days = Number(p.days);
-      const type = findFieldDeep(task.fields || [], V.period)?.type;
+      const savedType = findFieldDeep(task.fields || [], V.period)?.type;
+      const type = savedType === 'due_date' || savedType === 'due_date_time'
+        ? savedType : (await vacationFormSettings()).periodType;
       const fields = [
         vacationPeriod(start, days, type),
         { id: V.year, value: start.slice(0, 4) },
