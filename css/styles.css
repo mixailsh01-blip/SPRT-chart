@@ -4686,14 +4686,34 @@ body.swap-mode .app-toast {
   text-decoration: none;
 }
 
+.attendance-excluded,
+.attendance-excluded-swatch {
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  border: 1px solid #462000;
+  border-radius: 4px;
+  background: #ffad57;
+  color: #3a1b00;
+  font: 700 13px/1 system-ui, sans-serif;
+  text-shadow: none;
+}
+
 .attendance-excluded {
   position: absolute;
-  bottom: 3px;
-  right: 4px;
-  width: 9px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--text-muted);
+  z-index: 1;
+  right: 2px;
+  bottom: 2px;
+}
+
+@media (max-width: 768px) {
+  .attendance-excluded {
+    width: 12px;
+    height: 12px;
+    font-size: 10px;
+  }
 }
 
 .attendance-status {

@@ -4955,6 +4955,16 @@ function getNominalShifts() {
   return { nominalShift, shortenedNominalShift };
 }
 
+function createExportExclusionBadge(day) {
+  const badge = document.createElement("span");
+  badge.className = "attendance-excluded";
+  badge.textContent = "×";
+  badge.title = "День исключён из табеля для бухгалтера · " + day.split("-").reverse().join(".");
+  badge.setAttribute("role", "img");
+  badge.setAttribute("aria-label", badge.title);
+  return badge;
+}
+
 function renderScheduleCurrentLine() {
   birthdayObserver?.disconnect();
   closeEmployeeFilterPopover();
@@ -5116,6 +5126,8 @@ th1.appendChild(th1Label);
     tr.appendChild(tdName);
 
     const showNominalSchedule = line === "ALL" && !isSupportEmployee(row.employeeId);
+    const attendanceRows = showNominalSchedule && state.attendance?.monthKey === monthKey
+      ? state.attendance.rows : null;
     let totalAmount = 0;
     let totalShifts = 0;
 
@@ -5170,6 +5182,15 @@ th1.appendChild(th1Label);
         }
 
         td.appendChild(pill);
+        if (attendanceRows) {
+          for (let offset = 0; offset < len; offset++) {
+            const date = attendanceDate(monthKey, dayNumber + offset);
+            if (attendanceRows.get(date + ":" + row.employeeId)?.include_in_export !== false) continue;
+            const badge = createExportExclusionBadge(date);
+            badge.style.right = "calc(" + ((len - offset - 1) / len * 100) + "% + 2px)";
+            td.appendChild(badge);
+          }
+        }
 
         td.addEventListener("click", (ev) => {
           ev.stopPropagation();
@@ -5211,9 +5232,8 @@ th1.appendChild(th1Label);
       const nominal = !savedShift && showNominalSchedule && nominalWorkdays.has(dayNumber)
         ? (dayKind === "preholiday" ? shortenedNominalShift : nominalShift)
         : null;
-      const attendance = showNominalSchedule && state.attendance?.monthKey === monthKey
-        ? state.attendance.rows.get(attendanceDate(monthKey, dayNumber) + ":" + row.employeeId)
-        : null;
+      const date = attendanceDate(monthKey, dayNumber);
+      const attendance = attendanceRows?.get(date + ":" + row.employeeId);
       const absence = ABSENCE_LABELS[attendance?.absence];
       const shift = savedShift || nominal;
 
@@ -5306,11 +5326,7 @@ th1.appendChild(th1Label);
       }
 
       if (attendance?.include_in_export === false) {
-        const excluded = document.createElement("span");
-        excluded.className = "attendance-excluded";
-        excluded.title = "Не включать в выгрузку бухгалтеру";
-        excluded.setAttribute("aria-label", excluded.title);
-        td.appendChild(excluded);
+        td.appendChild(createExportExclusionBadge(date));
       }
 
       const clickDay = dayNumber;
