@@ -6,11 +6,12 @@ const codes = new Set(['ОТП', 'ОГ', 'Б', 'П', 'В', '-']);
 const validText = (value, max) => typeof value === 'string' && value.length <= max && !/[\x00-\x1f\x7f]/u.test(value);
 const validCell = value => codes.has(value) || (Number.isInteger(value) && value > 0 && value <= 1440);
 
-export function validateAttendanceReport({ month, employees, weekends }) {
+export function validateAttendanceReport({ month, period = 'payroll', employees, weekends }) {
   const invalid = () => Object.assign(new Error('Проверьте даты, сотрудников и часы в табеле'), { status: 400 });
-  if (typeof month !== 'string' || !/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(month)) throw invalid();
+  if (typeof month !== 'string' || !/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(month) ||
+      (period !== 'advance' && period !== 'payroll')) throw invalid();
   const [year, number] = month.split('-').map(Number);
-  const days = new Date(Date.UTC(year, number, 0)).getUTCDate();
+  const days = period === 'advance' ? 15 : new Date(Date.UTC(year, number, 0)).getUTCDate();
   if (!Array.isArray(employees) || !employees.length || employees.length > 500 ||
       !Array.isArray(weekends) || weekends.length > days ||
       !weekends.every(day => Number.isInteger(day) && day >= 1 && day <= days)) throw invalid();
@@ -24,7 +25,7 @@ export function validateAttendanceReport({ month, employees, weekends }) {
   if (employees.every(person => person.cells.every(cell => cell === '-'))) {
     throw Object.assign(new Error('В табеле нет дней для выгрузки'), { status: 400 });
   }
-  return { month, employees, weekends };
+  return { month, period, employees, weekends };
 }
 
 export function renderAttendancePdf(report) {

@@ -542,6 +542,13 @@ test('только роль 1331872 меняет ежедневные отмет
   }], weekends: [7, 8] };
   assert.equal((await attendanceExport(report, adminToken)).status, 403);
   assert.equal((await attendanceExport(report)).status, 200);
+  const advance = {
+    ...report, period: 'advance',
+    employees: report.employees.map(person => ({ ...person, cells: person.cells.slice(0, 15) })),
+  };
+  assert.equal((await attendanceExport(advance)).body.data.period, 'advance');
+  assert.equal((await attendanceExport({ ...report, period: 'advance' })).status, 400);
+  assert.equal((await attendanceExport({ ...advance, period: 'payroll' })).status, 400);
   assert.equal((await portal.act(request('attendance.export', report))).status, 401);
   assert.equal((await attendanceExport({ ...report, month: '2026-12' })).status, 400);
 

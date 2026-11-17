@@ -84,7 +84,7 @@ async function serve(req, res) {
       const pdf = await renderAttendancePdf(result.data);
       res.writeHead(200, {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': 'attachment; filename="attendance-' + result.data.month + '.pdf"',
+        'Content-Disposition': 'attachment; filename="attendance-' + result.data.period + '-' + result.data.month + '.pdf"',
         'Cache-Control': 'no-store',
       });
       return res.end(pdf);

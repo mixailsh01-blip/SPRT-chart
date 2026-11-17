@@ -14,7 +14,7 @@ import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=6";
 import { createVacationReport } from "./vacationReport.js?v=7";
-import { ABSENCE_LABELS, attendanceDate, indexAttendance, reviewAttendance } from "./services/attendance.js?v=2";
+import { ABSENCE_LABELS, attendanceDate, indexAttendance, reviewAttendance } from "./services/attendance.js?v=3";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
@@ -4841,10 +4841,7 @@ async function exportAttendance() {
         const shift = row.shiftsByDay[index] || nominal;
         if (!shift) return dayKind === "holiday" ? "П" : "В";
         const minutes = support ? shift.durationMinutes : computeDurationMinutes(shift.startLocal, shift.endLocal);
-        if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 1440) {
-          throw new Error("Проверьте часы смены: " + row.employeeName + ", " + attendanceDate(monthKey, day));
-        }
-        return minutes;
+        return Number.isInteger(minutes) && minutes > 0 && minutes <= 1440 ? minutes : null;
       });
       employees.push({ id, name: row.employeeName, cells });
     }
@@ -4854,7 +4851,7 @@ async function exportAttendance() {
     const revision = attendanceRevision;
     const verifiedAttendance = [...attendance.values()];
     const verifiedVacations = JSON.stringify(vacations);
-    await reviewAttendance(report, async selectedEmployees => {
+    await reviewAttendance(report, async selectedReport => {
       if (!canManageAllVacations() || !scheduleReady() || attendanceRevision !== revision) {
         throw new Error("График изменился. Закройте проверку и откройте табель снова.");
       }
@@ -4867,20 +4864,21 @@ async function exportAttendance() {
           JSON.stringify(freshVacations) !== verifiedVacations) {
         throw new Error("Данные изменились. Закройте проверку и откройте табель снова.");
       }
-      const pdf = await apiClient.call("attendance.export", { ...report, employees: selectedEmployees });
+      const pdf = await apiClient.call("attendance.export", selectedReport);
       if (!(pdf instanceof Blob)) throw new Error("Сервер не вернул PDF");
-      downloadAttendancePdf(pdf, monthKey);
+      downloadAttendancePdf(pdf, monthKey, selectedReport.period);
     });
   } catch (error) {
     alert("Не удалось открыть табель. " + (error?.message || ""));
   }
 }
 
-function downloadAttendancePdf(pdf, monthKey) {
+function downloadAttendancePdf(pdf, monthKey, period) {
   const url = URL.createObjectURL(pdf);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "Табель-" + monthKey + ".pdf";
+  const periodLabel = period === "advance" ? "Аванс" : "ЗП";
+  link.download = "Табель-" + periodLabel + "-" + monthKey + ".pdf";
   document.body.appendChild(link);
   link.click();
   link.remove();

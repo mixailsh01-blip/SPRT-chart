@@ -47,6 +47,7 @@ def render(report):
     month_label = f"{MONTHS[month - 1]} {year}"
     employees = report["employees"]
     day_count = len(employees[0]["cells"])
+    period_label = "Аванс" if report["period"] == "advance" else "ЗП"
     weekends = set(report["weekends"])
     margin, name_width, total_width, row_height, page_size = 27, 166, 49, 27, 15
     grid_width = width - margin * 2
@@ -69,7 +70,9 @@ def render(report):
         pdf.setFont("DejaVuBold", 21)
         pdf.drawString(margin + 54, height - 48, "Табель учёта рабочего времени")
         pdf.setFont("DejaVuBold", 12)
-        pdf.drawRightString(width - margin, height - 45, month_label)
+        pdf.drawRightString(width - margin, height - 42, month_label)
+        pdf.setFont("DejaVu", 9)
+        pdf.drawRightString(width - margin, height - 57, f"{period_label} · 1-{day_count}")
         pdf.setFillColor(MUTED)
         pdf.setFont("DejaVu", 9)
         pdf.drawString(

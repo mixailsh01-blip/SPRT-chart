@@ -4794,3 +4794,21 @@ body.swap-mode .app-toast {
 .attendance-review-omitted td:not(:first-child) {
   text-decoration: line-through;
 }
+
+.attendance-review-period {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.attendance-review-period select {
+  padding: 5px 10px;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--table-border-strong);
+  border-radius: 8px;
+  font: inherit;
+}
