@@ -3126,7 +3126,7 @@ function handleVacationRangeClick({ line, row, day }) {
   }
   state.quickMode.vacationStart = null;
   renderScheduleCurrentLine();
-  const submitLine = canManageAllVacations() ? "ALL" : line === "ALL" ? getOwnEditableLineKey() : line;
+  const submitLine = vacationSubmitLine(line, row.employeeId);
   if (!submitLine) {
     alert("Не удалось определить ваш отдел для отпуска. Поставьте его во вкладке своего подразделения.");
     return;
@@ -3134,7 +3134,13 @@ function handleVacationRangeClick({ line, row, day }) {
   createVacationForRange(line, row, Math.min(start.day, day), Math.max(start.day, day), submitLine);
 }
 
-async function createVacationForRange(line, row, firstDay, lastDay, submitLine = line) {
+function vacationSubmitLine(line, employeeId) {
+  if (canManageAllVacations()) return "ALL";
+  if (line === "ALL") return isOwnEmployeeId(employeeId) ? getOwnEditableLineKey() : null;
+  return canEditRow(line, employeeId) ? line : null;
+}
+
+async function createVacationForRange(line, row, firstDay, lastDay, submitLine, { confirmed = false } = {}) {
   const { year, monthIndex } = state.monthMeta;
   const sched = state.scheduleByLine[line];
   const days = sched?.days || [];
@@ -3149,20 +3155,20 @@ async function createVacationForRange(line, row, firstDay, lastDay, submitLine =
       `В период отпуска у сотрудника есть смены: ${shiftDays.join(", ")} число.\n` +
         "Сначала удалите их (и сохраните), затем поставьте отпуск."
     );
-    return;
+    return false;
   }
   const overlapping = (state.vacationsByEmployee[row.employeeId] || []).find(
     (v) => v.startDay <= lastDay && (v.endDayExclusive || v.startDay + 1) > firstDay
   );
   if (overlapping) {
     alert(`Период пересекается с отпуском ${overlapping.startLabel} – ${overlapping.endLabel}.`);
-    return;
+    return false;
   }
 
   const count = lastDay - firstDay + 1;
   const fromLabel = formatDateRu(year, monthIndex, firstDay);
   const toLabel = formatDateRu(year, monthIndex, lastDay);
-  if (!confirm(`Добавить отпуск в Pyrus?\n\n${row.employeeName}\nс ${fromLabel} по ${toLabel} (${count} дн.)`)) return;
+  if (!confirmed && !confirm(`Добавить отпуск в Pyrus?\n\n${row.employeeName}\nс ${fromLabel} по ${toLabel} (${count} дн.)`)) return false;
 
   // Показываем отпуск сразу, до ответа сервера; при ошибке — откатываем
   const entry = {
@@ -3198,10 +3204,11 @@ async function createVacationForRange(line, row, firstDay, lastDay, submitLine =
     if (idx >= 0) cur.splice(idx, 1);
     renderScheduleCurrentLine();
     alert(`Не удалось добавить отпуск: ${err.message || err}`);
-    return;
+    return false;
   }
   // Сверка с Pyrus — в фоне, не блокирует уже показанный результат
   refreshVacationsForCurrentMonth().catch(() => {});
+  return true;
 }
 
 async function confirmAndDeleteVacation(row, vac) {
@@ -5271,7 +5278,7 @@ th1.appendChild(th1Label);
       const clickDayIndex = dayIndex;
       td.addEventListener("click", () => {
         if (absence && !state.quickMode.enabled && !state.swap) {
-          openAttendancePopover(row.employeeId, row.employeeName, clickDay, td);
+          openAttendancePopover(row.employeeId, row.employeeName, clickDay, td, { line });
           return;
         }
         handleShiftCellClick({
@@ -5545,17 +5552,139 @@ function openBirthdayPopover(context, anchorEl) {
 
 
 
-function addAttendanceButton(employeeId, employeeName, day, anchorEl, options) {
-  if (!Number.isInteger(day) || isSupportEmployee(employeeId)) return;
+function newPopoverButton(label, action) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "btn";
-  button.textContent = "Табель";
-  button.addEventListener("click", () => openAttendancePopover(employeeId, employeeName, day, anchorEl, options));
-  shiftPopoverEl.querySelector(".shift-popover-footer").prepend(button);
+  button.textContent = label;
+  button.addEventListener("click", action);
+  return button;
 }
 
-function openAttendancePopover(employeeId, employeeName, day, anchorEl, { vacation = false } = {}) {
+function addDayOptions({ line, employeeId, employeeName, day }, anchorEl, { vacation = false } = {}) {
+  const support = isSupportEmployee(employeeId);
+  const buttons = [];
+  if (!vacation && vacationSubmitLine(line, employeeId)) {
+    buttons.push(newPopoverButton("Отпуск", () => openVacationCreatePopover(line, employeeId, day, anchorEl)));
+  }
+  if (!support) {
+    if (!vacation && canManageAllVacations()) {
+      for (const [absence, { label }] of Object.entries(ABSENCE_LABELS)) {
+        buttons.push(newPopoverButton(label, () =>
+          openAttendancePopover(employeeId, employeeName, day, anchorEl, { line, absence })));
+      }
+    }
+    buttons.push(newPopoverButton("Выгрузка", () =>
+      openAttendancePopover(employeeId, employeeName, day, anchorEl, { line, vacation })));
+  }
+  if (!buttons.length) return;
+
+  const section = document.createElement("div");
+  section.className = "shift-popover-section";
+  const title = document.createElement("div");
+  title.className = "shift-popover-section-title";
+  title.textContent = "Статус дня";
+  const actions = document.createElement("div");
+  actions.className = "shift-template-list";
+  actions.append(...buttons);
+  section.append(title, actions);
+  shiftPopoverEl.querySelector(".shift-popover-body").append(section);
+}
+
+function prepareDayPopover() {
+  if (shiftPopoverKeydownHandler) document.removeEventListener("keydown", shiftPopoverKeydownHandler);
+  if (autoSaveHeld) {
+    autoSaveHeld = false;
+    if (linesWithPendingChanges().length) scheduleAutoSave(0);
+  }
+}
+
+function showDayPopover(anchorEl) {
+  shiftPopoverEl.querySelector(".shift-popover-close").addEventListener("click", closeShiftPopover);
+  shiftPopoverKeydownHandler = event => {
+    if (event.key === "Escape") closeShiftPopover();
+  };
+  document.addEventListener("keydown", shiftPopoverKeydownHandler);
+  shiftPopoverBackdropEl.classList.remove("hidden");
+  shiftPopoverEl.classList.remove("hidden");
+  if (anchorEl.isConnected) positionShiftPopover(anchorEl);
+  shiftPopoverEl.classList.add("open");
+}
+
+function openVacationCreatePopover(line, employeeId, day, anchorEl) {
+  const submitLine = vacationSubmitLine(line, employeeId);
+  const schedule = state.scheduleByLine[line];
+  const row = schedule?.rows.find(item => Number(item.employeeId) === Number(employeeId));
+  if (!submitLine || !row) return;
+  if (state.ui.isScheduleCached) {
+    alert("Дождитесь загрузки свежего графика из Pyrus.");
+    return;
+  }
+
+  const { year, monthIndex } = state.monthMeta;
+  const monthKey = getMonthKey(year, monthIndex);
+  const initial = attendanceDate(monthKey, day);
+  const first = attendanceDate(monthKey, 1);
+  const last = attendanceDate(monthKey, schedule.days.at(-1));
+
+  prepareDayPopover();
+  shiftPopoverEl.innerHTML = `
+    <div class="shift-popover-header">
+      <div>
+        <div class="shift-popover-title">Новый отпуск</div>
+        <div class="shift-popover-subtitle"></div>
+      </div>
+      <button class="shift-popover-close" type="button" aria-label="Закрыть">✕</button>
+    </div>
+    <form id="vacation-create-form">
+      <div class="shift-popover-body">
+        <div class="field-row">
+          <label for="vacation-create-start">Начало</label>
+          <input type="date" id="vacation-create-start" required>
+        </div>
+        <div class="field-row">
+          <label for="vacation-create-end">Последний день</label>
+          <input type="date" id="vacation-create-end" required>
+        </div>
+      </div>
+      <div class="shift-popover-footer">
+        <button class="btn" type="button" id="vacation-create-cancel">Отмена</button>
+        <button class="btn primary" type="submit">Поставить отпуск</button>
+      </div>
+    </form>`;
+
+  shiftPopoverEl.querySelector(".shift-popover-subtitle").textContent = row.employeeName;
+  const form = shiftPopoverEl.querySelector("form");
+  const start = form.querySelector("#vacation-create-start");
+  const end = form.querySelector("#vacation-create-end");
+  const submit = form.querySelector('[type="submit"]');
+  start.min = first;
+  start.max = last;
+  end.min = initial;
+  end.max = last;
+  start.value = end.value = initial;
+  start.addEventListener("change", () => {
+    end.min = start.value;
+    if (end.value < start.value) end.value = start.value;
+  });
+  form.querySelector("#vacation-create-cancel").addEventListener("click", closeShiftPopover);
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (submit.disabled || !form.reportValidity()) return;
+    if (getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex) !== monthKey) return;
+    submit.disabled = true;
+    try {
+      const saved = await createVacationForRange(line, row, Number(start.value.slice(-2)),
+        Number(end.value.slice(-2)), submitLine, { confirmed: true });
+      if (saved && form.isConnected) closeShiftPopover();
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  showDayPopover(anchorEl);
+}
+
+function openAttendancePopover(employeeId, employeeName, day, anchorEl, { line, vacation = false, absence } = {}) {
   if (isSupportEmployee(employeeId)) return;
   const { year, monthIndex } = state.monthMeta;
   const monthKey = getMonthKey(year, monthIndex);
@@ -5565,12 +5694,7 @@ function openAttendancePopover(employeeId, employeeName, day, anchorEl, { vacati
   const record = loaded ? state.attendance.rows.get(key) : null;
   const canEdit = loaded && canManageAllVacations();
 
-  if (shiftPopoverKeydownHandler) document.removeEventListener("keydown", shiftPopoverKeydownHandler);
-  if (autoSaveHeld) {
-    autoSaveHeld = false;
-    if (linesWithPendingChanges().length) scheduleAutoSave(0);
-  }
-
+  prepareDayPopover();
   shiftPopoverEl.innerHTML = `
     <div class="shift-popover-header">
       <div>
@@ -5610,14 +5734,17 @@ function openAttendancePopover(employeeId, employeeName, day, anchorEl, { vacati
   const save = form.querySelector('[type="submit"]');
   const status = form.querySelector('[role="status"]');
   if (!vacation) absenceSelect.querySelector('[value="vacation"]').remove();
-  absenceSelect.value = vacation ? "vacation" : record?.absence || "";
+  absenceSelect.value = vacation ? "vacation" : (absence ?? record?.absence ?? "");
   absenceSelect.disabled = !canEdit || vacation;
   include.checked = record?.include_in_export !== false;
   include.disabled = !canEdit;
   save.classList.toggle("hidden", !canEdit);
   if (!loaded) status.textContent = "Табель пока не загрузился. Обновите страницу.";
 
-  shiftPopoverEl.querySelector(".shift-popover-close").addEventListener("click", closeShiftPopover);
+  if (!vacation && line && vacationSubmitLine(line, employeeId)) {
+    form.querySelector(".shift-popover-footer").prepend(
+      newPopoverButton("Отпуск", () => openVacationCreatePopover(line, employeeId, day, anchorEl)));
+  }
   form.querySelector("#attendance-close").addEventListener("click", closeShiftPopover);
   form.addEventListener("submit", async event => {
     event.preventDefault();
@@ -5646,14 +5773,7 @@ function openAttendancePopover(employeeId, employeeName, day, anchorEl, { vacati
       include.disabled = false;
     }
   });
-  shiftPopoverKeydownHandler = event => {
-    if (event.key === "Escape") closeShiftPopover();
-  };
-  document.addEventListener("keydown", shiftPopoverKeydownHandler);
-  shiftPopoverBackdropEl.classList.remove("hidden");
-  shiftPopoverEl.classList.remove("hidden");
-  positionShiftPopover(anchorEl);
-  shiftPopoverEl.classList.add("open");
+  showDayPopover(anchorEl);
 }
 
 function openVacationPopover(context, anchorEl) {
@@ -5701,7 +5821,7 @@ function openVacationPopover(context, anchorEl) {
     </div>
   `;
 
-  addAttendanceButton(row.employeeId, employeeName, day, anchorEl, { vacation: true });
+  addDayOptions({ line, employeeId: row.employeeId, employeeName, day }, anchorEl, { vacation: true });
 
   shiftPopoverBackdropEl.classList.remove("hidden");
   shiftPopoverEl.classList.remove("hidden");
@@ -5823,7 +5943,7 @@ function openShiftPopoverReadOnly(context, anchorEl) {
     </div>
   `;
 
-  addAttendanceButton(employeeId, employeeName, day, anchorEl);
+  addDayOptions(context, anchorEl);
 
   shiftPopoverBackdropEl.classList.remove("hidden");
   shiftPopoverEl.classList.remove("hidden");
@@ -6007,7 +6127,7 @@ function openShiftPopover(context, anchorEl) {
     </div>
   `;
 
-  addAttendanceButton(employeeId, employeeName, day, anchorEl);
+  addDayOptions(context, anchorEl);
 
   shiftPopoverBackdropEl.classList.remove("hidden");
   shiftPopoverEl.classList.remove("hidden");
