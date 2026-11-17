@@ -1235,7 +1235,7 @@ function persistLocalChanges() {
 // Кнопка «Сохранить в Pyrus» остаётся: по ней можно отправить сразу или повторить после ошибки.
 const AUTOSAVE_DELAY_MS_MOBILE = 1200;
 const AUTOSAVE_DELAY_MS_DESKTOP = 2000;
-const autoSave = { timer: null, running: false, again: false, error: null };
+const autoSave = { timer: null, running: null, again: false, error: null };
 
 function isMobileLayout() {
   return window.matchMedia("(max-width: 768px)").matches;
@@ -1258,38 +1258,38 @@ function scheduleAutoSave(delayMs = isMobileLayout() ? AUTOSAVE_DELAY_MS_MOBILE 
   updateSaveButtonState();
 }
 
-async function runAutoSave() {
+function runAutoSave() {
+  if (autoSave.timer) clearTimeout(autoSave.timer);
   autoSave.timer = null;
-  if (state.ui.isScheduleCached) {
-    // Ждём свежий график: после загрузки reloadScheduleForCurrentMonth запустит отправку сам
-    updateSaveButtonState();
-    return;
-  }
   if (autoSave.running) {
     autoSave.again = true;
-    return;
+    return autoSave.running;
   }
   const lines = linesWithPendingChanges();
-  if (!lines.length) {
+  if (state.ui.isScheduleCached || !lines.length) {
     updateSaveButtonState();
     return;
   }
-  autoSave.running = true;
+
+  const { year, monthIndex } = state.monthMeta;
   autoSave.error = null;
-  updateSaveButtonState();
-  try {
-    for (const line of lines) await saveLineToPyrus(line);
-  } catch (err) {
+  autoSave.running = Promise.resolve().then(async () => {
+    for (const line of lines) {
+      if (state.monthMeta.year !== year || state.monthMeta.monthIndex !== monthIndex) break;
+      await saveLineToPyrus(line);
+    }
+  }).catch(err => {
     autoSave.error = err;
-    // Ошибка видна на кнопке («Не сохранено — повторить»), отдельное окно не нужно
-  } finally {
-    autoSave.running = false;
+  }).finally(() => {
+    autoSave.running = null;
     updateSaveButtonState();
     if (autoSave.again) {
       autoSave.again = false;
       scheduleAutoSave(200);
     }
-  }
+  });
+  updateSaveButtonState();
+  return autoSave.running;
 }
 
 window.addEventListener("beforeunload", (event) => {
@@ -4371,7 +4371,19 @@ async function loadShiftsCatalog() {
 const SCHEDULE_RETRY_DELAYS_MS = [3000, 10000, 30000, 60000];
 const scheduleRetry = { timer: null, attempt: 0 };
 
-async function reloadScheduleForCurrentMonth({ showCached = false, isRetry = false, background = false } = {}) {
+let activeScheduleLoad = null;
+
+function reloadScheduleForCurrentMonth(options) {
+  const month = getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex);
+  const load = { month, promise: null };
+  load.promise = loadScheduleForCurrentMonth(options).finally(() => {
+    if (activeScheduleLoad === load) activeScheduleLoad = null;
+  });
+  activeScheduleLoad = load;
+  return load.promise;
+}
+
+async function loadScheduleForCurrentMonth({ showCached = false, isRetry = false, background = false } = {}) {
   const { year, monthIndex } = state.monthMeta;
   const monthKey = getMonthKey(year, monthIndex);
   const isCurrentMonth = () =>
@@ -4803,24 +4815,63 @@ function bindEmployeeRowReordering(tbody, line, rows) {
   }
 }
 
+let attendanceExportOpen = false;
+
+async function prepareAttendanceSchedule(monthKey) {
+  const currentMonth = () => getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex);
+  const checkMonth = () => {
+    if (currentMonth() !== monthKey) throw new Error("Выбран другой месяц. Откройте табель снова.");
+  };
+  const needsLoad = () => state.ui.isScheduleCached || state.ui.scheduleLoadError ||
+    state.originalScheduleByLine.ALL?.monthKey !== monthKey;
+
+  if (needsLoad() || autoSave.running || linesWithPendingChanges().length || attendanceWrites.size) {
+    showAppToast("Подготавливаем табель…");
+  }
+  if (needsLoad()) {
+    if (activeScheduleLoad?.month === monthKey) await activeScheduleLoad.promise;
+    checkMonth();
+    if (needsLoad()) {
+      scheduleService.invalidateMonthSchedule();
+      await reloadScheduleForCurrentMonth({ background: true });
+      checkMonth();
+    }
+    if (needsLoad()) {
+      throw new Error("Не удалось обновить график из Pyrus. " + (state.ui.scheduleLoadError?.message || "Попробуйте ещё раз."));
+    }
+  }
+
+  if (autoSave.running) await autoSave.running;
+  checkMonth();
+  if (linesWithPendingChanges().length && !autoSaveHeld) await runAutoSave();
+  await Promise.all(attendanceWrites.values());
+  checkMonth();
+  if (linesWithPendingChanges().length) {
+    if (autoSave.error) throw new Error("Не удалось сохранить смены в Pyrus. " + autoSave.error.message);
+    throw new Error("В графике есть несохранённые смены. Закройте карточку смены и повторите выгрузку.");
+  }
+  if (needsLoad()) throw new Error("Не удалось обновить график из Pyrus после сохранения. Попробуйте ещё раз.");
+}
+
 async function exportAttendance() {
-  if (!canManageAllVacations()) return;
+  if (!canManageAllVacations() || attendanceExportOpen) return;
+  attendanceExportOpen = true;
 
   const { year, monthIndex } = state.monthMeta;
   const monthKey = getMonthKey(year, monthIndex);
-  const schedule = state.originalScheduleByLine.ALL;
-  const scheduleReady = () => schedule?.monthKey === monthKey &&
-    getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex) === monthKey &&
-    state.originalScheduleByLine.ALL === schedule &&
-    !state.ui.isScheduleCached && !autoSave.running && !linesWithPendingChanges().length && !attendanceWrites.size;
+  const scheduleReady = () => getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex) === monthKey &&
+    state.originalScheduleByLine.ALL?.monthKey === monthKey &&
+    !state.ui.isScheduleCached && !state.ui.scheduleLoadError &&
+    !autoSave.running && !linesWithPendingChanges().length && !attendanceWrites.size;
 
   try {
-    if (!scheduleReady()) throw new Error("Дождитесь загрузки и сохранения графика");
+    await prepareAttendanceSchedule(monthKey);
     const [attendanceData, vacations] = await Promise.all([
       apiClient.call("attendance.list", { month: monthKey }),
       vacationsService.getVacationsForMonth(monthKey, { force: true }),
     ]);
-    if (!scheduleReady()) throw new Error("График обновился. Повторите выгрузку");
+    if (!scheduleReady()) throw new Error("График обновляется. Повторите выгрузку.");
+    const schedule = state.originalScheduleByLine.ALL;
 
     const attendance = indexAttendance(attendanceData.rows);
     const { dayKindByDay, nominalWorkdays } = getScheduleCalendar(year, monthIndex, schedule.days);
@@ -4851,15 +4902,17 @@ async function exportAttendance() {
     const revision = attendanceRevision;
     const verifiedAttendance = [...attendance.values()];
     const verifiedVacations = JSON.stringify(vacations);
+    const reportReady = () => scheduleReady() && state.originalScheduleByLine.ALL === schedule &&
+      attendanceRevision === revision;
     await reviewAttendance(report, async selectedReport => {
-      if (!canManageAllVacations() || !scheduleReady() || attendanceRevision !== revision) {
+      if (!canManageAllVacations() || !reportReady()) {
         throw new Error("График изменился. Закройте проверку и откройте табель снова.");
       }
       const [freshAttendance, freshVacations] = await Promise.all([
         apiClient.call("attendance.list", { month: monthKey }),
         vacationsService.getVacationsForMonth(monthKey, { force: true }),
       ]);
-      if (!scheduleReady() || attendanceRevision !== revision ||
+      if (!reportReady() ||
           JSON.stringify(freshAttendance.rows) !== JSON.stringify(verifiedAttendance) ||
           JSON.stringify(freshVacations) !== verifiedVacations) {
         throw new Error("Данные изменились. Закройте проверку и откройте табель снова.");
@@ -4870,6 +4923,8 @@ async function exportAttendance() {
     });
   } catch (error) {
     alert("Не удалось открыть табель. " + (error?.message || ""));
+  } finally {
+    attendanceExportOpen = false;
   }
 }
 
@@ -5669,15 +5724,16 @@ function addDayOptions({ employeeId, employeeName, day }, anchorEl, { vacation =
   });
 }
 
-const attendanceWrites = new Set();
+const attendanceWrites = new Map();
 let attendanceRevision = 0;
 
 async function saveDayAttendance(monthKey, payload) {
   const key = payload.date + ":" + payload.employee_id;
   if (attendanceWrites.has(key)) throw new Error("Отметка уже сохраняется");
-  attendanceWrites.add(key);
+  const request = apiClient.call("attendance.save", payload);
+  attendanceWrites.set(key, request);
   try {
-    const { row } = await apiClient.call("attendance.save", payload);
+    const { row } = await request;
     attendanceRevision++;
     if (state.attendance?.monthKey === monthKey) {
       state.attendance.rows.set(key, row);
