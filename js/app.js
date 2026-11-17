@@ -4892,7 +4892,10 @@ async function exportAttendance() {
         const shift = row.shiftsByDay[index] || nominal;
         if (!shift) return dayKind === "holiday" ? "П" : "В";
         const minutes = support ? shift.durationMinutes : computeDurationMinutes(shift.startLocal, shift.endLocal);
-        return Number.isInteger(minutes) && minutes > 0 && minutes <= 1440 ? minutes : null;
+        if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 1440) return null;
+        const officeDay = shift.startLocal === "09:00" &&
+          (shift.endLocal === "18:00" || shift.endLocal === "17:00");
+        return officeDay ? minutes - 60 : minutes;
       });
       const kinds = cells.map((cell, index) => {
         const dayKind = dayKindByDay[schedule.days[index]];
@@ -4900,8 +4903,8 @@ async function exportAttendance() {
         if (typeof cell !== "number") return null;
         const shift = row.shiftsByDay[index];
         const start = shift?.startLocal || nominalShift.startLocal;
-        const end = shift?.endLocal || nominalShift.endLocal;
-        if (dayKind === "preholiday" && !support && !shift) return "shortened";
+        const end = shift?.endLocal || (dayKind === "preholiday" ? shortenedNominalShift?.endLocal : nominalShift.endLocal);
+        if (dayKind === "preholiday" && start === "09:00" && end === "17:00") return "shortened";
         if (start === "21:00" && end === "09:00") return "night";
         if (start === "11:00" && end === "23:00") return "duty";
         if (start === "09:00" && end === "21:00") return "long";

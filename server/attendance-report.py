@@ -62,11 +62,15 @@ def cell_style(cell, kind):
         return "holiday", "П"
     if cell == "В":
         return "weekend", ""
-    return kind or ("long" if cell == 720 else "day"), hours(cell)
+    return kind or ("long" if cell == 720 else "day"), work_hours(cell)
 
 
 def foreground(kind):
     return white if kind in ("vacation", "shortened") else INK
+
+
+def work_hours(minutes):
+    return f"{minutes / 60:.2f}".rstrip("0").rstrip(".").replace(".", ",")
 
 
 def hours(minutes):
@@ -191,7 +195,7 @@ def render(report):
             pdf.drawString(x + 29, y + 1, description)
         pdf.setFont("DejaVu", 7)
         pdf.setFillColor(MUTED)
-        pdf.drawString(margin, 15, "В ячейках указаны часы и минуты смены.")
+        pdf.drawString(margin, 15, "В ячейках указаны рабочие часы. Смена 9-18: 8 часов, 9-17: 7 часов с учётом обеда.")
         pdf.drawRightString(width - margin, 15, f"{page + 1} / {page_count}")
         pdf.showPage()
     pdf.save()
