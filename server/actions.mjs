@@ -63,7 +63,7 @@ const PATH_WHITELIST = [
   new RegExp(`^/v4/forms/(${FORM_SCHEDULE}|${FORM_VACATIONS})/register$`),
 ];
 
-export async function handleAction({ request, store, telephony, lunches, schedules, pyrus }) {
+export async function handleAction({ request, store, telephony, lunches, schedules, attendance, pyrus }) {
   // ---------- хранилище ----------
   if (!store.secret) store.secret = crypto.randomBytes(32).toString('hex');
   store.codes = store.codes || {};
@@ -449,6 +449,56 @@ export async function handleAction({ request, store, telephony, lunches, schedul
     if (action === 'auth.logout') {
       delete store.sessions[session.key];
       return ok({});
+    }
+
+    if (action === 'attendance.list') {
+      const month = String(p.month || '');
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return fail(400, 'BAD_REQUEST', 'Укажите месяц табеля');
+      return ok({ rows: attendance.byPrefix(month + '-') });
+    }
+
+    if (action === 'attendance.save') {
+      if (!(await canManageAllVacations(session))) {
+        return fail(403, 'FORBIDDEN', 'Табель может менять только сотрудник с ролью 1331872');
+      }
+      const employeeId = Number(p.employee_id);
+      const date = typeof p.date === 'string' ? p.date : '';
+      const timestamp = new Date(date + 'T00:00:00Z');
+      if (!Number.isSafeInteger(employeeId) || employeeId <= 0 ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(timestamp.getTime()) ||
+          timestamp.toISOString().slice(0, 10) !== date ||
+          ![null, 'day_off', 'sick'].includes(p.absence) || typeof p.include_in_export !== 'boolean') {
+        return fail(400, 'BAD_REQUEST', 'Проверьте сотрудника, дату и отметки табеля');
+      }
+
+      const [membersData, employeeRoles, registry, lineByItem] = await Promise.all([
+        membersWithDepartments(), rolesOf(employeeId), pyrus('GET', SCHEDULE_REGISTER_PATH), departmentLines(),
+      ]);
+      const member = membersData.members.find(item => Number(item.id) === employeeId &&
+        !item.banned && (!item.type || item.type === 'user'));
+      if (!member) return fail(404, 'NOT_FOUND', 'Сотрудник не найден');
+      const tpName = TP_DEPARTMENT.departmentName.trim().toUpperCase();
+      const month = date.slice(0, 7);
+      if (!Array.isArray(registry.tasks)) throw new Error('Не удалось проверить смены в реестре Pyrus');
+      const inSupportSchedule = registry.tasks.some(task => {
+        const fields = task.fields || [];
+        const employee = Number(findFieldDeep(fields, F.person)?.value?.id);
+        const starts = Date.parse(findFieldDeep(fields, F.due)?.value);
+        const department = findFieldDeep(fields, F.department)?.value;
+        return employee === employeeId && Number.isFinite(starts) && localDay(starts).startsWith(month) &&
+          (lineByItem[department?.item_id] === 'TP' ||
+          Number(department?.item_id || 0) === Number(TP_DEPARTMENT.departmentItemId || -1) ||
+          (department?.values || []).some(name => String(name).trim().toUpperCase() === tpName) ||
+          String(department?.name || '').trim().toUpperCase() === tpName);
+      });
+      if (employeeRoles.map(Number).includes(TP_MEMBER_ROLE) ||
+          String(member.department_name || '').trim().toUpperCase() === tpName ||
+          TP_DEPARTMENT.orgDepartmentIds.map(Number).includes(Number(member.department_id)) || inSupportSchedule) {
+        return fail(403, 'FORBIDDEN', 'Отметки табеля пока недоступны для ТП');
+      }
+
+      const row = { employee_id: employeeId, date, absence: p.absence, include_in_export: p.include_in_export };
+      return ok({ row }, null, { attendanceUpdate: row });
     }
 
     if (action === 'pyrus.request') {

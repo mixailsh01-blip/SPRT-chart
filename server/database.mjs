@@ -4,19 +4,21 @@ export function openDatabase(filename) {
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
   db.exec('CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-  const names = ['schedules', 'telephony', 'lunches', 'mango_users', 'roster', 'notifications', 'schedule_updates'];
+  const names = ['schedules', 'telephony', 'lunches', 'mango_users', 'roster', 'notifications', 'schedule_updates', 'attendance'];
   for (const name of names) {
     db.exec('CREATE TABLE IF NOT EXISTS ' + name + ' (id TEXT PRIMARY KEY, data TEXT NOT NULL)');
   }
 
   const tables = Object.fromEntries(names.map(name => {
     const all = db.prepare('SELECT data FROM ' + name);
+    const byPrefix = db.prepare('SELECT data FROM ' + name + ' WHERE id >= ? AND id < ?');
     const get = db.prepare('SELECT data FROM ' + name + ' WHERE id = ?');
     const upsert = db.prepare('INSERT INTO ' + name + ' VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data');
     const clear = db.prepare('DELETE FROM ' + name);
     const remove = db.prepare('DELETE FROM ' + name + ' WHERE id = ?');
     return [name, {
       all: () => all.all().map(row => JSON.parse(row.data)),
+      byPrefix: prefix => byPrefix.all(prefix, prefix + '\uffff').map(row => JSON.parse(row.data)),
       has: id => Boolean(get.get(String(id))),
       put: (id, row) => upsert.run(String(id), JSON.stringify(row)),
       clear: () => clear.run(),

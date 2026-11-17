@@ -46,7 +46,7 @@ export function createPortal({ db, pyrus, mango, sendMail, env }) {
   async function action(request) {
     const result = await handleAction({
       request, store, pyrus: readWithRecentUpdates, telephony: db.telephony.all(),
-      lunches: db.lunches.all(), schedules: db.schedules.all(),
+      lunches: db.lunches.all(), schedules: db.schedules.all(), attendance: db.attendance,
     });
     const resultData = result.body?.data;
     const source = request.body.action;
@@ -69,12 +69,16 @@ export function createPortal({ db, pyrus, mango, sendMail, env }) {
           db.schedule_updates.put(id, { id, at: now });
         }
       }
+      if (result.attendanceUpdate) {
+        const row = result.attendanceUpdate;
+        db.attendance.put(row.date + ':' + row.employee_id, row);
+      }
       for (const row of result.lunchUpdates || []) {
         const id = row.id ?? randomUUID();
         db.lunches.put(id, { ...row, id });
       }
     });
-    if (scheduleChanged) for (const listener of scheduleListeners) listener();
+    if (scheduleChanged || result.attendanceUpdate) for (const listener of scheduleListeners) listener();
     if (result.mangoSync || result.telUpdates?.length || result.body?.data?.deletedIds?.length) {
       const due = Date.now() + 10_000;
       requestedSync = requestedSync ? Math.min(requestedSync, due) : due;

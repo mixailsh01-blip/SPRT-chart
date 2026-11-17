@@ -8,12 +8,13 @@ import { listenForScheduleChanges } from "./api/scheduleEvents.js";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
-import { createVacationsService } from "./services/vacationsService.js?v=7";
+import { createVacationsService } from "./services/vacationsService.js?v=8";
 import { isShiftTemplateAvailable } from "./services/shiftTemplateScope.js";
 import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=6";
 import { createVacationReport } from "./vacationReport.js?v=7";
+import { ABSENCE_LABELS, attendanceDate, indexAttendance, encodeAttendanceCsv } from "./services/attendance.js";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
@@ -259,6 +260,7 @@ const state = {
     year: null,
     monthIndex: null,
   },
+  attendance: null,
   vacationsByEmployee: {},
   employeeFiltersByLine: makeByLine(() => []),
   employeeOrderByLine: makeByLine(() => []),
@@ -622,6 +624,7 @@ function applyAuthCache(data) {
 
 function resetAuthState() {
   clearAuthCache();
+  state.attendance = null;
   state.auth.user = null;
   state.auth.roles = null;
   state.auth.memberId = null;
@@ -2314,6 +2317,7 @@ function setProfileDropdownOpen(open) {
     $("#btn-settings")?.classList.toggle("hidden", !canOpenSettings());
     const canVacReport = canOpenVacationReport();
     $("#btn-vacation-report")?.classList.toggle("hidden", !canVacReport);
+    $("#btn-attendance-export")?.classList.toggle("hidden", !canManageAllVacations());
     if (canVacReport) vacationReport.prefetch();
   }
   profileDropdownEl.classList.toggle("hidden", !open);
@@ -2340,6 +2344,10 @@ function bindTopBarButtons() {
     if (e.target.closest("#btn-vacation-report")) {
       setProfileDropdownOpen(false);
       vacationReport.open();
+    }
+    if (e.target.closest("#btn-attendance-export")) {
+      setProfileDropdownOpen(false);
+      exportAttendance();
     }
     if (e.target.closest("#btn-settings")) {
       setProfileDropdownOpen(false);
@@ -4408,6 +4416,13 @@ function prefetchAdjacentProdCalendars(year, monthIndex) {
 async function reloadScheduleForCurrentMonthInner() {
   const { year, monthIndex } = state.monthMeta;
   const monthKey = getMonthKey(year, monthIndex);
+  const attendanceToken = state.auth.sessionToken;
+  const attendancePromise = apiClient.call("attendance.list", { month: monthKey })
+    .then(data => indexAttendance(data.rows))
+    .catch(error => {
+      console.warn("Не удалось загрузить табель", error);
+      return null;
+    });
   // Календарь запрашиваем параллельно с графиком, а не после него
   const prodCalendarPromise = prodCalendarService.getProdCalendarForMonth(year, monthIndex);
   prodCalendarPromise.catch(() => {});
@@ -4457,8 +4472,13 @@ async function reloadScheduleForCurrentMonthInner() {
     state.prodCalendar = null;
   }
 
+  const attendanceRows = await attendancePromise;
   if (!scheduleResult.isLatest || monthKey !== getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex)) {
     return;
+  }
+
+  if (attendanceRows && state.auth.sessionToken === attendanceToken) {
+    state.attendance = { monthKey, rows: attendanceRows };
   }
 
   const data = scheduleResult.data;
@@ -4760,6 +4780,136 @@ function bindEmployeeRowReordering(tbody, line, rows) {
   }
 }
 
+async function exportAttendance() {
+  if (!canManageAllVacations()) return;
+
+  const { year, monthIndex } = state.monthMeta;
+  const monthKey = getMonthKey(year, monthIndex);
+  const schedule = state.originalScheduleByLine.ALL;
+  const scheduleReady = () => schedule?.monthKey === monthKey &&
+    getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex) === monthKey &&
+    state.originalScheduleByLine.ALL === schedule &&
+    !state.ui.isScheduleCached && !autoSave.running && !linesWithPendingChanges().length;
+
+  try {
+    if (!scheduleReady()) throw new Error("Дождитесь загрузки и сохранения графика");
+    const [attendanceData, vacations] = await Promise.all([
+      apiClient.call("attendance.list", { month: monthKey }),
+      vacationsService.getVacationsForMonth(monthKey, { force: true }),
+    ]);
+    if (!scheduleReady()) throw new Error("График обновился. Повторите выгрузку");
+
+    const attendance = indexAttendance(attendanceData.rows);
+    const { dayKindByDay, nominalWorkdays } = getScheduleCalendar(year, monthIndex, schedule.days);
+    const { nominalShift, shortenedNominalShift } = getNominalShifts();
+    const employees = new Map(state.employeesByLine.ALL.map(employee => [Number(employee.id), employee]));
+    const rows = [];
+
+    for (const row of schedule.rows) {
+      if (isSupportEmployee(row.employeeId)) continue;
+      const department = employees.get(Number(row.employeeId))?.departmentName || "";
+      const employeeVacations = vacations[row.employeeId] || [];
+      for (const [index, day] of schedule.days.entries()) {
+        const date = attendanceDate(monthKey, day);
+        const mark = attendance.get(date + ":" + row.employeeId);
+        if (mark?.include_in_export === false) continue;
+
+        const dayKind = dayKindByDay[day];
+        const vacation = employeeVacations.some(period => day >= period.startDay && day < period.endDayExclusive);
+        const absence = ABSENCE_LABELS[mark?.absence];
+        const nominal = nominalWorkdays.has(day) ? (dayKind === "preholiday" ? shortenedNominalShift : nominalShift) : null;
+        const saved = row.shiftsByDay[index];
+        const shift = vacation || absence ? null : saved || nominal;
+        const status = vacation ? "Отпуск" : absence?.label ||
+          (shift ? (shift === shortenedNominalShift ? "Сокращённый день" : "Смена") :
+            dayKind === "holiday" ? "Праздник" : "Выходной");
+        const minutes = shift ? computeDurationMinutes(shift.startLocal, shift.endLocal) : 0;
+        const hours = (minutes / 60).toLocaleString("ru-RU", { maximumFractionDigits: 4 });
+        rows.push([date, row.employeeName, department, status, shift?.startLocal, shift?.endLocal, hours]);
+      }
+    }
+
+    const csv = new Blob([encodeAttendanceCsv(rows)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(csv);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "Табель-" + monthKey + ".csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    alert("Не удалось выгрузить табель. " + (error?.message || ""));
+  }
+}
+
+function weekdayName(year, monthIndex, day) {
+  return ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"][new Date(year, monthIndex, day).getDay()];
+}
+
+function getScheduleCalendar(year, monthIndex, days) {
+  const monthKey = getMonthKey(year, monthIndex);
+  const dayKindByDay = Object.create(null);
+  const nominalWorkdays = new Set();
+
+  let prod = state.prodCalendar && state.prodCalendar.monthKey === monthKey ? state.prodCalendar : null;
+  if (!prod) {
+    // Кэш календаря этого месяца (если уже загружали раньше) — показываем сразу
+    prod = prodCalendarService.peekProdCalendarForMonth(year, monthIndex);
+  }
+
+  for (const day of days) {
+    const weekday = weekdayName(year, monthIndex, day);
+
+    const dayType = prod && prod.dayTypeByDay ? prod.dayTypeByDay[day] : null;
+    // Фолбек, если производственного календаря нет: СБ/ВС и фиксированные праздники РФ
+    const isFallbackHoliday = (FIXED_RU_HOLIDAYS[monthIndex + 1] || []).includes(day);
+    const isFallbackWeekend = weekday === "Сб" || weekday === "Вс";
+
+    const dayKind = dayType === 1
+      ? "weekend"
+      : dayType === 8
+        ? "holiday"
+        : dayType === 2
+          ? "preholiday"
+          : dayType === 0 || dayType === 4
+            ? "workday"
+            : dayType == null
+              ? (isFallbackHoliday
+                  ? "holiday"
+                  : isFallbackWeekend
+                    ? "weekend"
+                    : (FIXED_RU_HOLIDAYS[monthIndex + 1] || []).includes(day + 1) ||
+                        (day === new Date(year, monthIndex + 1, 0).getDate() &&
+                          (FIXED_RU_HOLIDAYS[((monthIndex + 1) % 12) + 1] || []).includes(1))
+                      ? "preholiday"
+                      : "workday")
+              : null;
+
+    dayKindByDay[day] = dayKind;
+    if (weekday !== "Сб" && weekday !== "Вс" && (dayKind === "workday" || dayKind === "preholiday")) {
+      nominalWorkdays.add(day);
+    }
+  }
+  return { dayKindByDay, nominalWorkdays };
+}
+
+function getNominalShifts() {
+  const officeTemplate = (state.shiftTemplatesByLine.ALL || []).find(template =>
+    String(template.name).trim().toUpperCase().replace(/\s/g, "") === "СМЕНА5/2");
+  const nominalShift = {
+    startLocal: officeTemplate?.timeRange?.start || "09:00",
+    endLocal: officeTemplate?.timeRange?.end || "18:00",
+    templateId: officeTemplate?.id,
+  };
+
+  const shortenedNominalShift = computeDurationMinutes(nominalShift.startLocal, nominalShift.endLocal) > 60
+    ? { ...nominalShift, endLocal: addMinutesLocal(parseTimeToMinutes(nominalShift.endLocal), -60).time }
+    : null;
+
+  return { nominalShift, shortenedNominalShift };
+}
+
 function renderScheduleCurrentLine() {
   birthdayObserver?.disconnect();
   closeEmployeeFilterPopover();
@@ -4836,51 +4986,12 @@ function renderScheduleCurrentLine() {
   thName2.textContent = "";
   headRow2.appendChild(thName2);
 
-  const weekdayNames = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
   const { year, monthIndex } = state.monthMeta;
-  const monthKey = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
-  const dayKindByDay = Object.create(null);
-  const nominalWorkdays = new Set();
-
-  let prod = state.prodCalendar && state.prodCalendar.monthKey === monthKey ? state.prodCalendar : null;
-  if (!prod) {
-    // Кэш календаря этого месяца (если уже загружали раньше) — показываем сразу
-    prod = prodCalendarService.peekProdCalendarForMonth(year, monthIndex);
-  }
+  const monthKey = getMonthKey(year, monthIndex);
+  const { dayKindByDay, nominalWorkdays } = getScheduleCalendar(year, monthIndex, days);
 
   for (const day of days) {
-    const date = new Date(year, monthIndex, day);
-    const weekday = weekdayNames[(date.getDay() + 6) % 7];
-
-    const dayType = prod && prod.dayTypeByDay ? prod.dayTypeByDay[day] : null;
-    // Фолбек, если производственного календаря нет: СБ/ВС и фиксированные праздники РФ
-    const isFallbackHoliday = (FIXED_RU_HOLIDAYS[monthIndex + 1] || []).includes(day);
-    const isFallbackWeekend = weekday === "Сб" || weekday === "Вс";
-
-    const dayKind = dayType === 1
-      ? "weekend"
-      : dayType === 8
-        ? "holiday"
-        : dayType === 2
-          ? "preholiday"
-          : dayType === 0 || dayType === 4
-            ? "workday"
-            : dayType == null
-              ? (isFallbackHoliday
-                  ? "holiday"
-                  : isFallbackWeekend
-                    ? "weekend"
-                    : (FIXED_RU_HOLIDAYS[monthIndex + 1] || []).includes(day + 1) ||
-                        (day === new Date(year, monthIndex + 1, 0).getDate() &&
-                          (FIXED_RU_HOLIDAYS[((monthIndex + 1) % 12) + 1] || []).includes(1))
-                      ? "preholiday"
-                      : "workday")
-              : null;
-
-    if (weekday !== "Сб" && weekday !== "Вс" && (dayKind === "workday" || dayKind === "preholiday")) {
-      nominalWorkdays.add(day);
-    }
-
+    const dayKind = dayKindByDay[day];
     const th1 = document.createElement("th");
 const th1Label = document.createElement("span");
 th1Label.className = "header-text";
@@ -4889,7 +5000,6 @@ th1.appendChild(th1Label);
 
     if (dayKind) {
       th1.classList.add(`day-${dayKind}`);
-      dayKindByDay[day] = dayKind;
       const kindLabel = { weekend: "Выходной", holiday: "Праздник", preholiday: "Сокращённый (предпраздничный) день" }[dayKind];
       if (kindLabel) th1.title = kindLabel;
     }
@@ -4898,7 +5008,7 @@ th1.appendChild(th1Label);
     const th2 = document.createElement("th");
     const th2Label = document.createElement("span");
     th2Label.className = "header-text";
-    th2Label.textContent = weekday;
+    th2Label.textContent = weekdayName(year, monthIndex, day);
     th2.appendChild(th2Label);
     th2.className = "weekday-header";
     if (dayKind) {
@@ -4939,17 +5049,7 @@ th1.appendChild(th1Label);
 
   const tbody = document.createElement("tbody");
 
-  const officeTemplate = (state.shiftTemplatesByLine.ALL || []).find(template =>
-    String(template.name).trim().toUpperCase().replace(/\s/g, "") === "СМЕНА5/2");
-  const nominalShift = {
-    startLocal: officeTemplate?.timeRange?.start || "09:00",
-    endLocal: officeTemplate?.timeRange?.end || "18:00",
-    templateId: officeTemplate?.id,
-  };
-
-  const shortenedNominalShift = computeDurationMinutes(nominalShift.startLocal, nominalShift.endLocal) > 60
-    ? { ...nominalShift, endLocal: addMinutesLocal(parseTimeToMinutes(nominalShift.endLocal), -60).time }
-    : null;
+  const { nominalShift, shortenedNominalShift } = getNominalShifts();
 
   rows.forEach((row) => {
     const tr = document.createElement("tr");
@@ -5032,11 +5132,14 @@ th1.appendChild(th1Label);
             confirmAndDeleteVacation(row, vac);
             return;
           }
+          const rect = td.getBoundingClientRect();
+          const offset = Math.max(0, Math.min(len - 1, Math.floor((ev.clientX - rect.left) * len / rect.width)));
           openVacationPopover(
             {
               line,
               row,
               vac,
+              day: dayNumber + offset,
               employeeName: row.employeeName,
               startLabel: vac.startLabel,
               endLabel: vac.endLabel,
@@ -5062,6 +5165,10 @@ th1.appendChild(th1Label);
       const nominal = !savedShift && showNominalSchedule && nominalWorkdays.has(dayNumber)
         ? (dayKind === "preholiday" ? shortenedNominalShift : nominalShift)
         : null;
+      const attendance = showNominalSchedule && state.attendance?.monthKey === monthKey
+        ? state.attendance.rows.get(attendanceDate(monthKey, dayNumber) + ":" + row.employeeId)
+        : null;
+      const absence = ABSENCE_LABELS[attendance?.absence];
       const shift = savedShift || nominal;
 
       const td = document.createElement("td");
@@ -5081,7 +5188,14 @@ th1.appendChild(th1Label);
         td.appendChild(createBirthdayBadge(row, birthdayDayThisMonth, year, monthIndex + 1));
       }
 
-      if (shift) {
+      if (absence) {
+        td.classList.add("has-shift");
+        const badge = document.createElement("abbr");
+        badge.className = "attendance-absence";
+        badge.textContent = absence.short;
+        badge.title = absence.label;
+        td.appendChild(badge);
+      } else if (shift) {
         td.classList.add("has-shift");
         const pill = document.createElement("div");
         pill.className = nominal ? "shift-pill nominal-shift" : "shift-pill";
@@ -5145,9 +5259,21 @@ th1.appendChild(th1Label);
         }
       }
 
+      if (attendance?.include_in_export === false) {
+        const excluded = document.createElement("span");
+        excluded.className = "attendance-excluded";
+        excluded.title = "Не включать в выгрузку бухгалтеру";
+        excluded.setAttribute("aria-label", excluded.title);
+        td.appendChild(excluded);
+      }
+
       const clickDay = dayNumber;
       const clickDayIndex = dayIndex;
       td.addEventListener("click", () => {
+        if (absence && !state.quickMode.enabled && !state.swap) {
+          openAttendancePopover(row.employeeId, row.employeeName, clickDay, td);
+          return;
+        }
         handleShiftCellClick({
           line,
           row,
@@ -5300,6 +5426,7 @@ function closeShiftPopover() {
   }
 
   setTimeout(() => {
+    if (shiftPopoverEl.classList.contains("open")) return;
     shiftPopoverEl.classList.add("hidden");
     shiftPopoverEl.innerHTML = "";
   }, 140);
@@ -5418,8 +5545,119 @@ function openBirthdayPopover(context, anchorEl) {
 
 
 
+function addAttendanceButton(employeeId, employeeName, day, anchorEl, options) {
+  if (!Number.isInteger(day) || isSupportEmployee(employeeId)) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "btn";
+  button.textContent = "Табель";
+  button.addEventListener("click", () => openAttendancePopover(employeeId, employeeName, day, anchorEl, options));
+  shiftPopoverEl.querySelector(".shift-popover-footer").prepend(button);
+}
+
+function openAttendancePopover(employeeId, employeeName, day, anchorEl, { vacation = false } = {}) {
+  if (isSupportEmployee(employeeId)) return;
+  const { year, monthIndex } = state.monthMeta;
+  const monthKey = getMonthKey(year, monthIndex);
+  const date = attendanceDate(monthKey, day);
+  const key = date + ":" + employeeId;
+  const loaded = state.attendance?.monthKey === monthKey;
+  const record = loaded ? state.attendance.rows.get(key) : null;
+  const canEdit = loaded && canManageAllVacations();
+
+  if (shiftPopoverKeydownHandler) document.removeEventListener("keydown", shiftPopoverKeydownHandler);
+  if (autoSaveHeld) {
+    autoSaveHeld = false;
+    if (linesWithPendingChanges().length) scheduleAutoSave(0);
+  }
+
+  shiftPopoverEl.innerHTML = `
+    <div class="shift-popover-header">
+      <div>
+        <div class="shift-popover-title"></div>
+        <div class="shift-popover-subtitle"></div>
+      </div>
+      <button class="shift-popover-close" type="button" aria-label="Закрыть">✕</button>
+    </div>
+    <form id="attendance-day-form">
+      <div class="shift-popover-body">
+        <div class="field-row">
+          <label for="attendance-absence">Статус</label>
+          <select id="attendance-absence" class="attendance-status">
+            <option value="">По графику</option>
+            <option value="day_off">Отгул</option>
+            <option value="sick">Больничный</option>
+            <option value="vacation">Отпуск</option>
+          </select>
+        </div>
+        <label class="telephony-toggle">
+          <input type="checkbox" id="attendance-include">
+          <span>Включать в выгрузку бухгалтеру</span>
+        </label>
+        <div class="shift-popover-note" role="status"></div>
+      </div>
+      <div class="shift-popover-footer">
+        <button class="btn" type="button" id="attendance-close">Закрыть</button>
+        <button class="btn primary" type="submit">Сохранить</button>
+      </div>
+    </form>`;
+
+  shiftPopoverEl.querySelector(".shift-popover-title").textContent = employeeName;
+  shiftPopoverEl.querySelector(".shift-popover-subtitle").textContent = date.split("-").reverse().join(".") + " · Табель";
+  const form = shiftPopoverEl.querySelector("form");
+  const absenceSelect = form.querySelector("#attendance-absence");
+  const include = form.querySelector("#attendance-include");
+  const save = form.querySelector('[type="submit"]');
+  const status = form.querySelector('[role="status"]');
+  if (!vacation) absenceSelect.querySelector('[value="vacation"]').remove();
+  absenceSelect.value = vacation ? "vacation" : record?.absence || "";
+  absenceSelect.disabled = !canEdit || vacation;
+  include.checked = record?.include_in_export !== false;
+  include.disabled = !canEdit;
+  save.classList.toggle("hidden", !canEdit);
+  if (!loaded) status.textContent = "Табель пока не загрузился. Обновите страницу.";
+
+  shiftPopoverEl.querySelector(".shift-popover-close").addEventListener("click", closeShiftPopover);
+  form.querySelector("#attendance-close").addEventListener("click", closeShiftPopover);
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!canEdit || save.disabled) return;
+    save.disabled = true;
+    absenceSelect.disabled = true;
+    include.disabled = true;
+    status.textContent = "";
+    try {
+      const { row } = await apiClient.call("attendance.save", {
+        employee_id: employeeId,
+        date,
+        absence: vacation ? record?.absence || null : absenceSelect.value || null,
+        include_in_export: include.checked,
+      });
+      if (state.attendance?.monthKey === monthKey) {
+        state.attendance.rows.set(key, row);
+        renderScheduleCurrentLine();
+      }
+      if (form.isConnected) closeShiftPopover();
+    } catch (error) {
+      status.textContent = error?.message || "Не удалось сохранить отметку";
+    } finally {
+      save.disabled = false;
+      absenceSelect.disabled = vacation;
+      include.disabled = false;
+    }
+  });
+  shiftPopoverKeydownHandler = event => {
+    if (event.key === "Escape") closeShiftPopover();
+  };
+  document.addEventListener("keydown", shiftPopoverKeydownHandler);
+  shiftPopoverBackdropEl.classList.remove("hidden");
+  shiftPopoverEl.classList.remove("hidden");
+  positionShiftPopover(anchorEl);
+  shiftPopoverEl.classList.add("open");
+}
+
 function openVacationPopover(context, anchorEl) {
-  const { line, row, vac, employeeName, startLabel, endLabel } = context;
+  const { line, row, vac, employeeName, startLabel, endLabel, day } = context;
   const canEdit = vac.taskId != null && canManageAllVacations();
   const canDelete = canDeleteVacation(line, vac, row.employeeId);
   const isoFromLabel = label => {
@@ -5462,6 +5700,8 @@ function openVacationPopover(context, anchorEl) {
       <button class="btn" type="button" id="shift-btn-close-vacation">Закрыть</button>
     </div>
   `;
+
+  addAttendanceButton(row.employeeId, employeeName, day, anchorEl, { vacation: true });
 
   shiftPopoverBackdropEl.classList.remove("hidden");
   shiftPopoverEl.classList.remove("hidden");
@@ -5582,6 +5822,8 @@ function openShiftPopoverReadOnly(context, anchorEl) {
       <button class="btn" type="button" id="shift-btn-close-readonly">Закрыть</button>
     </div>
   `;
+
+  addAttendanceButton(employeeId, employeeName, day, anchorEl);
 
   shiftPopoverBackdropEl.classList.remove("hidden");
   shiftPopoverEl.classList.remove("hidden");
@@ -5764,6 +6006,8 @@ function openShiftPopover(context, anchorEl) {
       ${isMobileLayout() ? '<button class="btn primary" type="button" id="shift-btn-save">Сохранить</button>' : ""}
     </div>
   `;
+
+  addAttendanceButton(employeeId, employeeName, day, anchorEl);
 
   shiftPopoverBackdropEl.classList.remove("hidden");
   shiftPopoverEl.classList.remove("hidden");

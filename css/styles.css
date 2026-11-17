@@ -4673,3 +4673,30 @@ body.swap-mode .app-toast {
   outline-offset: 1px;
   box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.3);
 }
+
+.attendance-absence {
+  display: inline-grid;
+  place-items: center;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 2px 5px;
+  border: 1px solid var(--text-muted);
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.attendance-excluded {
+  position: absolute;
+  bottom: 3px;
+  right: 4px;
+  width: 9px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-muted);
+}
+
+.attendance-status {
+  color: inherit;
+  background: var(--sticky-bg);
+}

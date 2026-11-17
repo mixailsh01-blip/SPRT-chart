@@ -443,3 +443,76 @@ test('администратор меняет доступ шаблона, ко�
     upsert: [{ values: ['shift-5-2', 'СМЕНА 5/2', '09:00-18:00', '0', 'ВСЕ', 'Доп. значение'] }],
   }]);
 });
+
+test('только роль 1331872 меняет ежедневные отметки табеля вне ТП', async () => {
+  const db = openDatabase(':memory:');
+  const admin = { id: 11, email: 'admin@example.test' };
+  const support = { id: 12, department_name: 'ТП' };
+  const assignedToSupport = { id: 13 };
+  let editorGranted = true;
+  const pyrus = async (method, path, body) => {
+    if (path === '/v4/members') return { members: [member, admin, support, assignedToSupport] };
+    if (path === '/v4/contacts') return { organizations: [] };
+    if (path === '/v4/roles') return { roles: [
+      { id: 1331872, member_ids: editorGranted ? [member.id] : [] },
+      { id: 1331784, member_ids: [admin.id] },
+    ] };
+    if (path === '/v4/catalogs/309670') return { items: [{ item_id: 5, values: ['ТП'] }] };
+    if (path === '/v4/forms/2470373/register') return { tasks: [{ id: 10, fields: [
+      { id: 1, value: { item_id: 5 } },
+      { id: 2, value: { id: assignedToSupport.id } },
+      { id: 3, value: '2026-11-17T10:00:00Z' },
+    ] }] };
+    if (path === '/v4/tasks' && method === 'POST' && body.form_id === 2472006) return { task: { id: 900 } };
+    throw new Error('Unexpected API: ' + method + ' ' + path);
+  };
+
+  const mail = [];
+  const dependencies = {
+    db, env: { ...env, MANGO_WRITE_ENABLED: 'true' }, pyrus,
+    sendMail: async message => { mail.push(message); },
+    mango: async () => assert.fail('Табель не обращается к Mango'),
+  };
+  const portal = createPortal(dependencies);
+  async function signIn(person) {
+    await portal.act(request('auth.start', { identifier: person.email }));
+    const code = mail.at(-1).text.match(/Код: (\d{6})/)[1];
+    return (await portal.act(request('auth.verify', { identifier: person.email, code }))).body.data.sessionToken;
+  }
+  const editorToken = await signIn(member);
+  const adminToken = await signIn(admin);
+  const mark = { employee_id: member.id, date: '2026-11-17', absence: 'sick', include_in_export: false };
+  const save = (row, token = editorToken) => portal.act(request('attendance.save', row, token));
+  const list = (month, token = adminToken) => portal.act(request('attendance.list', { month }, token));
+
+  assert.deepEqual((await list('2026-11')).body.data.rows, []);
+  assert.equal((await save(mark, adminToken)).status, 403);
+  assert.equal((await save({ ...mark, employee_id: support.id })).status, 403);
+  assert.equal((await save({ ...mark, employee_id: assignedToSupport.id })).status, 403);
+  assert.equal((await save({ ...mark, date: '2026-11-31' })).status, 400);
+  assert.equal((await save({ ...mark, include_in_export: 'false' })).status, 400);
+
+  let updates = 0;
+  const events = createScheduleEvents(portal);
+  const connection = new EventEmitter();
+  connection.writeHead = () => {};
+  connection.write = message => { if (message.startsWith('event: schedule')) updates++; return true; };
+  connection.end = () => connection.emit('close');
+  try {
+    assert.equal(events.open({ headers: { authorization: 'Bearer ' + adminToken } }, connection), true);
+    const initialUpdates = updates;
+    assert.equal((await save(mark)).status, 200);
+    assert.equal(updates, initialUpdates + 1);
+  } finally {
+    events.close();
+  }
+
+  assert.deepEqual((await list('2026-11')).body.data.rows, [mark]);
+  assert.deepEqual((await list('2026-12')).body.data.rows, []);
+  const restored = { ...mark, absence: 'day_off', include_in_export: true };
+  assert.equal((await save(restored)).status, 200);
+  const restarted = createPortal(dependencies);
+  assert.deepEqual((await restarted.act(request('attendance.list', { month: '2026-11' }, adminToken))).body.data.rows, [restored]);
+  editorGranted = false;
+  assert.equal((await save(mark)).status, 403);
+});

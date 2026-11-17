@@ -115,7 +115,7 @@ export function createVacationsService({
       async () => {
         // Реестр отпусков один на все месяцы — запрашиваем его один раз (кеш 90 с),
         // а по месяцам только разбираем.
-        const raw = await cached("pyrus:vacations:register", { ttlMs: 90_000 }, () =>
+        const raw = await cached("pyrus:vacations:register", { ttlMs: 90_000, force }, () =>
           pyrusClient.pyrusRequest(`/v4/forms/${formId}/register`, { method: "GET" })
         );
         const data = unwrapPyrusData(raw);
