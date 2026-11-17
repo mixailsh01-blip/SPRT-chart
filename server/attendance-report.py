@@ -96,13 +96,9 @@ def render(report):
             name_lines = simpleSplit(person["name"], "DejaVuBold", 8.5, name_width - 14)
             if len(name_lines) > 2:
                 name_lines = [name_lines[0], " ".join(name_lines[1:])]
+            name_top = 15 if len(name_lines) > 1 else 10
             for line_index, line in enumerate(name_lines):
-                top = 19 if len(name_lines) > 1 else 16 if person["department"] else 10
-                name_y = y + top - line_index * 8
-                fitted_text(pdf, line, margin + 7, name_y, name_width - 14, 8.5)
-            if person["department"]:
-                pdf.setFillColor(MUTED)
-                fitted_text(pdf, person["department"], margin + 7, y + 3, name_width - 14, 6.5)
+                fitted_text(pdf, line, margin + 7, y + name_top - line_index * 9, name_width - 14, 8.5)
 
             person_minutes = 0
             for day, cell in enumerate(person["cells"], 1):

@@ -86,6 +86,12 @@ test('смена берётся из Pyrus, а настройки телефон
   ] });
   assert.equal(custom[0].telephony, false);
   assert.equal(custom[0].end_utc, '2026-11-16T08:30:00.000Z');
+  const office = structuredClone(tasks);
+  office[0].fields.find(field => field.id === 1).value.values = ['Офис'];
+  const [officeShift] = scheduleRows({ now, tasks: office, members, telephony: [
+    { task_id: 45, telephony: true },
+  ] });
+  assert.equal(officeShift.telephony, false);
 });
 
 test('просроченный обед остаётся активным до ручного возврата и создаёт уведомления один раз', async () => {
@@ -283,7 +289,9 @@ test('роль 1331872 редактирует смены вне ТП из вкл
   assert.equal(wrongTemplate.status, 403);
   assert.equal(wrongTemplate.body.error.code, 'FORBIDDEN_TEMPLATE');
   assert.equal(writes.length, 0);
-  assert.equal((await save('create', { ...create(other.id), item_id: 21 })).body.data.created, 1);
+  const created = await save('create', { ...create(other.id), item_id: 21, telephony: true });
+  assert.equal(created.body.data.created, 1);
+  assert.equal(created.body.data.tasks[0].telephony, false);
   assert.equal(writes[0].find(field => field.id === 1).value.item_id, otherDepartmentId);
   const wrongEdit = await save('edit', { ...create(other.id), task_id: existing.id, item_id: 20 });
   assert.equal(wrongEdit.body.data.edited, 0);

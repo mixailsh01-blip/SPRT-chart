@@ -304,7 +304,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       const mine = (r.person_id != null && r.person_id !== '' && Number(r.person_id) === Number(s.memberId)) || normName(r.name) === me;
       const start = new Date(r.start_utc).getTime();
       const end = new Date(r.end_utc).getTime();
-      return mine && r.telephony !== false && start <= now && end > now;
+      return mine && String(r.podrazdelenie || '').trim().toUpperCase() === 'ТП' && r.telephony !== false && start <= now && end > now;
     }) || null;
   }
 
@@ -557,6 +557,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       const inAll = p.meta?.line === 'ALL';
       const me = Number(session.memberId);
       let canEditItem;
+      let lineByItem;
       let departmentForEmployee;
       let templateAllowed;
       if (inAll) {
@@ -639,7 +640,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
           };
         }
       } else {
-        const lineByItem = await departmentLines();
+        lineByItem = await departmentLines();
         canEditItem = (itemId, employeeId) => {
           const perm = perms[lineByItem[itemId]];
           return perm === 'edit' || (perm === 'self' && Number(employeeId) === me);
@@ -703,6 +704,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       // telUpdates уходят в узел «Телефония: изменения» → таблица sprt_telephony.
       const result = { created: 0, edited: 0, deleted: 0, errors: [], tasks: [], deletedIds: [], telephonyField: 'sqlite:telephony' };
       const telUpdates = [];
+      const telephonyFor = shift => lineByItem?.[shift.department_item_id] === 'TP' && shift.telephony !== false;
       const rememberTask = (task, telephony, duration) => {
         if (!task || task.id == null) return;
         task.telephony = telephony !== false;
@@ -715,7 +717,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
         ...creates.map((t) => async () => {
           try {
             const r = await pyrus('POST', '/v4/tasks', { form_id: FORM_SCHEDULE, fields: fieldsOf(t, true) });
-            rememberTask(r && r.task, t.telephony, t.duration);
+            rememberTask(r && r.task, telephonyFor(t), t.duration);
             result.created++;
           } catch (e) { result.errors.push({ op: 'create', employee_id: t.employee_id, start: t.start, message: errText(e) }); }
         }),
@@ -726,8 +728,9 @@ export async function handleAction({ request, store, telephony, lunches, schedul
               throw new Error('Шаблон смены недоступен для подразделения сотрудника');
             }
             const r = await pyrus('POST', `/v4/tasks/${t.task_id}/comments`, { field_updates: fieldsOf(t) });
-            if (r && r.task) rememberTask(r.task, t.telephony, t.duration);
-            else telUpdates.push({ task_id: t.task_id, telephony: t.telephony !== false, duration_min: Number(t.duration) > 0 ? Number(t.duration) : null });
+            const telephony = telephonyFor(t);
+            if (r && r.task) rememberTask(r.task, telephony, t.duration);
+            else telUpdates.push({ task_id: t.task_id, telephony, duration_min: Number(t.duration) > 0 ? Number(t.duration) : null });
             result.edited++;
           } catch (e) { result.errors.push({ op: 'edit', task_id: t.task_id, message: errText(e) }); }
         }),

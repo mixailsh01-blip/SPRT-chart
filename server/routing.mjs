@@ -45,6 +45,7 @@ export function scheduleRows({ members, tasks, telephony, now }) {
     const end = start + durationMin * 60000;
     if (end < from || start > to) continue;
     const m = byId.get(person.value.id) || {};
+    const department = catText(f(F.dept)?.value);
     out.push({
       task_id: t.id,
       person_id: person.value.id, // id сотрудника Pyrus — по нему исключаем ушедших на обед
@@ -54,9 +55,9 @@ export function scheduleRows({ members, tasks, telephony, now }) {
       date_close: fmtLocal(end),
       start_utc: new Date(start).toISOString(),
       end_utc: new Date(end).toISOString(),
-      podrazdelenie: catText(f(F.dept)?.value),
+      podrazdelenie: department,
       smena: catText(f(F.shift)?.value),
-      telephony: telMap.has(Number(t.id)) ? telMap.get(Number(t.id)) : true,
+      telephony: String(department).trim().toUpperCase() === 'ТП' && telMap.get(Number(t.id)) !== false,
     });
   }
   return out;

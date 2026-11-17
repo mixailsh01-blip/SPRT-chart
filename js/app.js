@@ -14,7 +14,7 @@ import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=6";
 import { createVacationReport } from "./vacationReport.js?v=7";
-import { ABSENCE_LABELS, attendanceDate, indexAttendance, reviewAttendance } from "./services/attendance.js";
+import { ABSENCE_LABELS, attendanceDate, indexAttendance, reviewAttendance } from "./services/attendance.js?v=2";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
@@ -2909,7 +2909,7 @@ function buildPyrusChangesPayload(lineToSave = null) {
             duration: conversion.durationMinutes,
             amount: Number(currentShift.amount || 0),
             ...(line !== "ALL" && { department_item_id: departmentItemId }),
-            telephony: currentShift.telephony !== false,
+            telephony: line === "TP" && currentShift.telephony !== false,
           });
           return;
         }
@@ -2945,7 +2945,7 @@ function buildPyrusChangesPayload(lineToSave = null) {
             duration: conversion.durationMinutes,
             amount: Number(currentShift.amount || 0),
             ...(line !== "ALL" && { department_item_id: departmentItemId }),
-            telephony: currentShift.telephony !== false,
+            telephony: line === "TP" && currentShift.telephony !== false,
           });
         }
       });
@@ -3353,7 +3353,7 @@ function handleShiftCellClick({ line, row, day, dayIndex, shift, nominalShift, c
       amount,
       templateId,
       specialShortLabel,
-      telephony: previousShift ? previousShift.telephony !== false : !nominalShift,
+      telephony: line === "TP" && previousShift?.telephony !== false,
 	      startUtcIso: conversion.startUtcIso,
 	      endUtcIso: conversion.endUtcIso,
 	      durationMinutes: conversion.durationMinutes,
@@ -4603,7 +4603,7 @@ async function reloadScheduleForCurrentMonthInner() {
       rawShift: shiftCatalog,
       specialShortLabel: (matchingTemplate && matchingTemplate.specialShortLabel) || null,
       lineKey,
-      telephony,
+      telephony: lineKey === "TP" && telephony,
     };
 
     const putToMap = (key) => {
@@ -4825,29 +4825,28 @@ async function exportAttendance() {
     const attendance = indexAttendance(attendanceData.rows);
     const { dayKindByDay, nominalWorkdays } = getScheduleCalendar(year, monthIndex, schedule.days);
     const { nominalShift, shortenedNominalShift } = getNominalShifts();
-    const directory = new Map(state.employeesByLine.ALL.map(employee => [Number(employee.id), employee]));
     const employees = [];
     for (const row of schedule.rows) {
-      if (isSupportEmployee(row.employeeId)) continue;
+      const support = isSupportEmployee(row.employeeId);
       const id = Number(row.employeeId);
       const employeeVacations = vacations[id] || [];
       const cells = schedule.days.map((day, index) => {
-        const mark = attendance.get(attendanceDate(monthKey, day) + ":" + id);
+        const mark = support ? null : attendance.get(attendanceDate(monthKey, day) + ":" + id);
         if (mark?.include_in_export === false) return "-";
         if (employeeVacations.some(period => day >= period.startDay && day < period.endDayExclusive)) return "ОТП";
         if (ABSENCE_LABELS[mark?.absence]) return ABSENCE_LABELS[mark.absence].short;
 
         const dayKind = dayKindByDay[day];
-        const nominal = nominalWorkdays.has(day) ? (dayKind === "preholiday" ? shortenedNominalShift : nominalShift) : null;
+        const nominal = !support && nominalWorkdays.has(day) ? (dayKind === "preholiday" ? shortenedNominalShift : nominalShift) : null;
         const shift = row.shiftsByDay[index] || nominal;
         if (!shift) return dayKind === "holiday" ? "П" : "В";
-        const minutes = computeDurationMinutes(shift.startLocal, shift.endLocal);
+        const minutes = support ? shift.durationMinutes : computeDurationMinutes(shift.startLocal, shift.endLocal);
         if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 1440) {
           throw new Error("Проверьте часы смены: " + row.employeeName + ", " + attendanceDate(monthKey, day));
         }
         return minutes;
       });
-      employees.push({ id, name: row.employeeName, department: directory.get(id)?.departmentName || "", cells });
+      employees.push({ id, name: row.employeeName, cells });
     }
 
     const weekends = schedule.days.filter(day => ["holiday", "weekend"].includes(dayKindByDay[day]));
@@ -4855,7 +4854,7 @@ async function exportAttendance() {
     const revision = attendanceRevision;
     const verifiedAttendance = [...attendance.values()];
     const verifiedVacations = JSON.stringify(vacations);
-    await reviewAttendance(report, async () => {
+    await reviewAttendance(report, async selectedEmployees => {
       if (!canManageAllVacations() || !scheduleReady() || attendanceRevision !== revision) {
         throw new Error("График изменился. Закройте проверку и откройте табель снова.");
       }
@@ -4868,7 +4867,7 @@ async function exportAttendance() {
           JSON.stringify(freshVacations) !== verifiedVacations) {
         throw new Error("Данные изменились. Закройте проверку и откройте табель снова.");
       }
-      const pdf = await apiClient.call("attendance.export", report);
+      const pdf = await apiClient.call("attendance.export", { ...report, employees: selectedEmployees });
       if (!(pdf instanceof Blob)) throw new Error("Сервер не вернул PDF");
       downloadAttendancePdf(pdf, monthKey);
     });
@@ -5297,7 +5296,7 @@ th1.appendChild(th1Label);
           pill.appendChild(line1);
           pill.appendChild(line2);
         }
-        if (!nominal) {
+        if (!nominal && (line === "TP" || shift.lineKey === "TP")) {
           // Индикатор телефонии: зелёная точка — в телефонии, красная — нет (например, выезд)
           const telDot = document.createElement("span");
           const onPhone = shift.telephony !== false;
@@ -6138,10 +6137,10 @@ function openShiftPopover(context, anchorEl) {
       </div>
 
       <div class="shift-popover-section">
-        <label class="telephony-toggle">
-          <input type="checkbox" id="shift-telephony-input" ${nominalShift || shift?.telephony === false ? "" : "checked"}>
+        ${line === "TP" ? `<label class="telephony-toggle">
+          <input type="checkbox" id="shift-telephony-input" ${shift?.telephony === false ? "" : "checked"}>
           <span>Включён в телефонию</span>
-        </label>
+        </label>` : ""}
 
         <div class="shift-popover-note">
           ${isMobileLayout()
@@ -6286,7 +6285,7 @@ function openShiftPopover(context, anchorEl) {
 	    const start = normalizeTimeHHMM(startInput.value);
 	    const end = normalizeTimeHHMM(endInput.value);
       const amount = Number(amountInput.value || 0);
-      const telephony = document.getElementById("shift-telephony-input")?.checked !== false;
+      const telephony = document.getElementById("shift-telephony-input")?.checked === true;
 
       // Пока заполнено только одно из времён — ждём второе, без ошибки
       if (silent && (!start || !end)) return false;
@@ -6426,7 +6425,7 @@ function applyLocalChangesToSchedule() {
             startUtcIso: enriched.startUtcIso || null,
             endUtcIso: enriched.endUtcIso || null,
             durationMinutes: enriched.durationMinutes ?? null,
-            telephony: change.telephony !== false,
+            telephony: line === "TP" && change.telephony !== false,
           };
         } else {
           row.shiftsByDay[idx].startLocal = change.startLocal;
@@ -6442,7 +6441,7 @@ function applyLocalChangesToSchedule() {
           row.shiftsByDay[idx].endUtcIso = enriched.endUtcIso || null;
           row.shiftsByDay[idx].durationMinutes =
             enriched.durationMinutes ?? row.shiftsByDay[idx].durationMinutes;
-          if (change.telephony != null) row.shiftsByDay[idx].telephony = change.telephony !== false;
+          if (change.telephony != null) row.shiftsByDay[idx].telephony = line === "TP" && change.telephony !== false;
         }
       });
     }

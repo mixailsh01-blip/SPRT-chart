@@ -17,7 +17,7 @@ export function validateAttendanceReport({ month, employees, weekends }) {
   const seen = new Set();
   for (const person of employees) {
     if (!person || !Number.isSafeInteger(person.id) || person.id < 1 || seen.has(person.id) ||
-        !validText(person.name, 200) || !person.name.trim() || !validText(person.department, 200) ||
+        !validText(person.name, 200) || !person.name.trim() ||
         !Array.isArray(person.cells) || person.cells.length !== days || !person.cells.every(validCell)) throw invalid();
     seen.add(person.id);
   }

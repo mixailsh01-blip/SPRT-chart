@@ -4774,3 +4774,23 @@ body.swap-mode .app-toast {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.attendance-review-employee {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.attendance-review-employee input {
+  flex: none;
+  margin: 0;
+}
+
+.attendance-review-omitted td {
+  color: var(--text-muted);
+}
+
+.attendance-review-omitted td:not(:first-child) {
+  text-decoration: line-through;
+}
