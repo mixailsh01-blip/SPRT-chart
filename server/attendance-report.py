@@ -18,9 +18,55 @@ INK = HexColor("#132d3a")
 MUTED = HexColor("#476573")
 TEAL = HexColor("#07536d")
 LINE = HexColor("#d6e0e5")
-WEEKEND = HexColor("#edf3f6")
-ABSENCE = HexColor("#fbefd9")
-VACATION = HexColor("#dff1ea")
+COLORS = {
+    "day": "#00ffff",
+    "long": "#00ff00",
+    "night": "#6fa8dc",
+    "duty": "#ff9900",
+    "weekend": "#ff0000",
+    "unpaid": "#999999",
+    "vacation": "#000000",
+    "dismissal": "#ffe599",
+    "sick": "#b4a7d6",
+    "holiday": "#ffff00",
+    "shortened": "#3c78d8",
+    "excluded": "#eeeeee",
+}
+LEGEND = [
+    ("day", "8", "Рабочий день 9-18"),
+    ("long", "12", "Рабочий день 9-21"),
+    ("night", "12", "Ночная смена 21-9"),
+    ("duty", "12", "Дежурная смена 11-23"),
+    ("weekend", "", "Выходной"),
+    ("unpaid", "НО", "Неоплачиваемый отпуск"),
+    ("vacation", "О", "Оплачиваемый отпуск"),
+    ("dismissal", "У", "Увольнение"),
+    ("sick", "Б", "Больничный"),
+    ("holiday", "12", "Праздничные дни"),
+    ("shortened", "7", "Сокращённый день"),
+    ("unpaid", "ОГ", "Отгул"),
+    ("excluded", "-", "День исключён из выгрузки"),
+]
+
+
+def cell_style(cell, kind):
+    if cell == "ОТП":
+        return "vacation", "О"
+    if cell == "ОГ":
+        return "unpaid", "ОГ"
+    if cell == "Б":
+        return "sick", "Б"
+    if cell == "-":
+        return "excluded", "-"
+    if cell == "П":
+        return "holiday", "П"
+    if cell == "В":
+        return "weekend", ""
+    return kind or ("long" if cell == 720 else "day"), hours(cell)
+
+
+def foreground(kind):
+    return white if kind in ("vacation", "shortened") else INK
 
 
 def hours(minutes):
@@ -48,11 +94,10 @@ def render(report):
     employees = report["employees"]
     day_count = len(employees[0]["cells"])
     period_label = "Аванс" if report["period"] == "advance" else "ЗП"
-    weekends = set(report["weekends"])
     margin, name_width, total_width = 27, 166, 49
     header_y = height - 107
-    table_height = header_y - 64
-    page_size = int(table_height // 21)
+    table_height = header_y - 109
+    page_size = int(table_height // 18.5)
     row_height = min(27, table_height / min(len(employees), page_size))
     text_baseline = row_height / 2 - 3.5
     grid_width = width - margin * 2
@@ -110,15 +155,16 @@ def render(report):
             person_minutes = 0
             for day, cell in enumerate(person["cells"], 1):
                 x = day_left + (day - 1) * day_width
-                color = VACATION if cell == "ОТП" else ABSENCE if cell in ("ОГ", "Б") else WEEKEND if day in weekends or cell in ("В", "П", "-") else background
-                pdf.setFillColor(color)
+                kind = person.get("kinds", [None] * day_count)[day - 1]
+                style, label = cell_style(cell, kind)
+                pdf.setFillColor(HexColor(COLORS[style]))
                 pdf.rect(x, y, day_width, row_height, fill=1, stroke=0)
                 pdf.setStrokeColor(LINE)
                 pdf.line(x, y, x, y + row_height)
                 work = type(cell) is int
-                pdf.setFillColor(INK if work or cell in ("ОТП", "ОГ", "Б") else MUTED)
+                pdf.setFillColor(foreground(style))
                 pdf.setFont("DejaVu", 6.3 if work else 7)
-                pdf.drawCentredString(x + day_width / 2, y + text_baseline, hours(cell) if work else cell)
+                pdf.drawCentredString(x + day_width / 2, y + text_baseline, label)
                 if work:
                     person_minutes += cell
             pdf.setStrokeColor(LINE)
@@ -128,11 +174,23 @@ def render(report):
             pdf.setFont("DejaVuBold", 8)
             pdf.drawCentredString(total_left + total_width / 2, y + text_baseline, hours(person_minutes))
 
-        pdf.setFont("DejaVu", 8)
+        for item, (kind, label, description) in enumerate(LEGEND):
+            column, row = divmod(item, 5)
+            x = margin + column * (grid_width / 3)
+            y = 87 - row * 13
+            pdf.setStrokeColor(LINE)
+            pdf.setFillColor(HexColor(COLORS[kind]))
+            pdf.rect(x, y - 2, 23, 11, fill=1, stroke=1)
+            pdf.setFillColor(foreground(kind))
+            pdf.setFont("DejaVuBold", 6.5)
+            pdf.drawCentredString(x + 11.5, y + 1, label)
+            pdf.setFillColor(INK)
+            pdf.setFont("DejaVu", 7)
+            pdf.drawString(x + 29, y + 1, description)
+        pdf.setFont("DejaVu", 7)
         pdf.setFillColor(MUTED)
-        pdf.drawString(margin, 51, "Ячейки со временем показывают часы и минуты смены.")
-        pdf.drawString(margin, 37, "ОТП: отпуск    ОГ: отгул    Б: больничный    В: выходной    П: праздник    -: день исключён")
-        pdf.drawRightString(width - margin, 37, f"{page + 1} / {page_count}")
+        pdf.drawString(margin, 15, "В ячейках указаны часы и минуты смены.")
+        pdf.drawRightString(width - margin, 15, f"{page + 1} / {page_count}")
         pdf.showPage()
     pdf.save()
 

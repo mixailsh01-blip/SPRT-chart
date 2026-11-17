@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 const script = fileURLToPath(new URL('./attendance-report.py', import.meta.url));
 const codes = new Set(['ОТП', 'ОГ', 'Б', 'П', 'В', '-']);
+const kinds = new Set([null, 'day', 'long', 'night', 'duty', 'holiday', 'shortened']);
 const validText = (value, max) => typeof value === 'string' && value.length <= max && !/[\x00-\x1f\x7f]/u.test(value);
 const validCell = value => codes.has(value) || (Number.isInteger(value) && value > 0 && value <= 1440);
 
@@ -20,6 +21,8 @@ export function validateAttendanceReport({ month, period = 'payroll', employees,
     if (!person || !Number.isSafeInteger(person.id) || person.id < 1 || seen.has(person.id) ||
         !validText(person.name, 200) || !person.name.trim() ||
         !Array.isArray(person.cells) || person.cells.length !== days || !person.cells.every(validCell)) throw invalid();
+    if (person.kinds !== undefined && (!Array.isArray(person.kinds) || person.kinds.length !== days ||
+        !person.kinds.every(kind => kinds.has(kind)))) throw invalid();
     seen.add(person.id);
   }
   if (employees.every(person => person.cells.every(cell => cell === '-'))) {

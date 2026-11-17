@@ -112,7 +112,7 @@ export async function reviewAttendance({ month, employees, weekends }, download)
     const report = {
       month,
       period: period.value,
-      employees: selected().map(({ person }) => ({ ...person, cells: person.cells.slice(0, lastDay) })),
+      employees: selected().map(({ person }) => ({ ...person, cells: person.cells.slice(0, lastDay), kinds: person.kinds?.slice(0, lastDay) })),
       weekends: weekends.filter(day => day <= lastDay),
     };
     downloading = true;

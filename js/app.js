@@ -14,7 +14,7 @@ import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=6";
 import { createVacationReport } from "./vacationReport.js?v=7";
-import { ABSENCE_LABELS, attendanceDate, indexAttendance, reviewAttendance } from "./services/attendance.js?v=3";
+import { ABSENCE_LABELS, attendanceDate, indexAttendance, reviewAttendance } from "./services/attendance.js?v=4";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
@@ -4894,7 +4894,20 @@ async function exportAttendance() {
         const minutes = support ? shift.durationMinutes : computeDurationMinutes(shift.startLocal, shift.endLocal);
         return Number.isInteger(minutes) && minutes > 0 && minutes <= 1440 ? minutes : null;
       });
-      employees.push({ id, name: row.employeeName, cells });
+      const kinds = cells.map((cell, index) => {
+        const dayKind = dayKindByDay[schedule.days[index]];
+        if (dayKind === "holiday") return "holiday";
+        if (typeof cell !== "number") return null;
+        const shift = row.shiftsByDay[index];
+        const start = shift?.startLocal || nominalShift.startLocal;
+        const end = shift?.endLocal || nominalShift.endLocal;
+        if (dayKind === "preholiday" && !support && !shift) return "shortened";
+        if (start === "21:00" && end === "09:00") return "night";
+        if (start === "11:00" && end === "23:00") return "duty";
+        if (start === "09:00" && end === "21:00") return "long";
+        return "day";
+      });
+      employees.push({ id, name: row.employeeName, cells, kinds });
     }
 
     const weekends = schedule.days.filter(day => ["holiday", "weekend"].includes(dayKindByDay[day]));
