@@ -110,15 +110,17 @@ def render(report):
     excluded = cells.count("-")
 
     for page in range(page_count):
-        pdf.setFillColor(TEAL)
-        pdf.rect(margin, height - 52, 42, 22, fill=1, stroke=0)
-        pdf.setFillColor(white)
-        pdf.setFont("DejaVuBold", 9)
-        pdf.drawCentredString(margin + 21, height - 44, "СПРТ")
+        for index, letter in enumerate("SPRT"):
+            x = margin + index * 20.34
+            pdf.setFillColor(INK)
+            pdf.roundRect(x, height - 52, 18, 18, 4, fill=1, stroke=0)
+            pdf.setFillColor(white)
+            pdf.setFont("DejaVu", 11.5)
+            pdf.drawCentredString(x + 9, height - 47, letter)
 
         pdf.setFillColor(INK)
-        pdf.setFont("DejaVuBold", 21)
-        pdf.drawString(margin + 54, height - 48, "Табель учёта рабочего времени")
+        pdf.setFont("DejaVuBold", 19)
+        pdf.drawString(margin + 94, height - 48, "Табель учёта рабочего времени")
         pdf.setFont("DejaVuBold", 12)
         pdf.drawRightString(width - margin, height - 42, month_label)
         pdf.setFont("DejaVu", 9)
