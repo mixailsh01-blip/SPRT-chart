@@ -3,7 +3,7 @@
 // Чистый vanilla JS.
 
 import { config, getConfigValue } from "./config.js?v=10";
-import { createApiClient } from "./api/apiClient.js?v=5";
+import { createApiClient } from "./api/apiClient.js?v=6";
 import { listenForScheduleChanges } from "./api/scheduleEvents.js";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
@@ -14,7 +14,7 @@ import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
 import { createSettingsPanel } from "./settings.js?v=6";
 import { createVacationReport } from "./vacationReport.js?v=7";
-import { ABSENCE_LABELS, attendanceDate, indexAttendance, encodeAttendanceCsv } from "./services/attendance.js";
+import { ABSENCE_LABELS, attendanceDate, indexAttendance, reviewAttendance } from "./services/attendance.js";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
 
 
@@ -242,6 +242,7 @@ const state = {
   },
   quickMode: {
     enabled: false,
+    absence: null,
     deleteMode: false, // в «Шаблоне смены» выбрано «Удалить смену»: клик по ячейке стирает смену
     vacationMode: false, // выбрано «Отпуск»: клик по первому дню, затем по последнему
     vacationStart: null, // { line, employeeId, day } — первый выбранный день отпуска
@@ -2480,17 +2481,18 @@ function initQuickAssignPanel() {
 
   quickTemplateSelectEl?.addEventListener("change", () => {
     const val = quickTemplateSelectEl.value;
+    state.quickMode.absence = Object.hasOwn(ABSENCE_LABELS, val) ? val : null;
     state.quickMode.deleteMode = val === QUICK_DELETE_VALUE;
     state.quickMode.vacationMode = val === QUICK_VACATION_VALUE;
     resetVacationStart();
     state.quickMode.templateId =
-      val && !state.quickMode.deleteMode && !state.quickMode.vacationMode ? Number(val) : null;
+      val && !state.quickMode.deleteMode && !state.quickMode.vacationMode && !state.quickMode.absence ? Number(val) : null;
     // Выбор шаблона сразу включает режим — не нужно ещё отдельно нажимать «Быстрое назначение».
     // Селект доступен только когда есть права (см. updateQuickModeForLine), поэтому здесь их не проверяем.
     state.quickMode.enabled = Boolean(val);
     updateQuickModeToggleUI();
     updateQuickModeForLine();
-    if (state.quickMode.deleteMode || state.quickMode.vacationMode) return;
+    if (state.quickMode.deleteMode || state.quickMode.vacationMode || state.quickMode.absence) return;
 
     const tmpl = getCurrentLineTemplates().find(
       (t) => t.id === state.quickMode.templateId
@@ -2564,12 +2566,27 @@ function renderQuickTemplateOptions() {
     resetVacationStart();
   }
 
+  if (isAll && canManageAllVacations()) {
+    const group = document.createElement("optgroup");
+    group.label = "Отметки табеля";
+    for (const [value, { label }] of Object.entries(ABSENCE_LABELS)) {
+      group.append(new Option(label, value));
+    }
+    quickTemplateSelectEl.append(group);
+    if (state.quickMode.absence) quickTemplateSelectEl.value = state.quickMode.absence;
+  } else if (state.quickMode.absence) {
+    state.quickMode.absence = null;
+    state.quickMode.enabled = false;
+    updateQuickModeToggleUI();
+  }
+
   const delOption = document.createElement("option");
   delOption.value = QUICK_DELETE_VALUE;
-  delOption.textContent = canEditShifts ? "🗑 Удалить смену / отпуск" :
+  delOption.textContent = canEditShifts ? (isAll && canManageAllVacations() ? "🗑 Удалить смену / отпуск / отметку" : "🗑 Удалить смену / отпуск") :
     canManageAllVacations() ? "🗑 Удалить отпуск" : "🗑 Удалить свой отпуск";
   quickTemplateSelectEl.appendChild(delOption);
 
+  if (state.quickMode.absence) return;
   const hasPrev = currentLineTemplates.some((t) => t.id === prevSelected);
   if (state.quickMode.vacationMode) {
     quickTemplateSelectEl.value = QUICK_VACATION_VALUE;
@@ -2640,7 +2657,7 @@ function updateQuickModeForLine() {
       : `Нет прав на редактирование ${lineLabel}`;
   }
   
-  const noTimes = !canEditShifts || state.quickMode.deleteMode || state.quickMode.vacationMode;
+  const noTimes = !canEditShifts || state.quickMode.deleteMode || state.quickMode.vacationMode || Boolean(state.quickMode.absence);
   if (quickTimeFromInputEl) {
     quickTimeFromInputEl.disabled = noTimes;
   }
@@ -4795,7 +4812,7 @@ async function exportAttendance() {
   const scheduleReady = () => schedule?.monthKey === monthKey &&
     getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex) === monthKey &&
     state.originalScheduleByLine.ALL === schedule &&
-    !state.ui.isScheduleCached && !autoSave.running && !linesWithPendingChanges().length;
+    !state.ui.isScheduleCached && !autoSave.running && !linesWithPendingChanges().length && !attendanceWrites.size;
 
   try {
     if (!scheduleReady()) throw new Error("Дождитесь загрузки и сохранения графика");
@@ -4808,45 +4825,67 @@ async function exportAttendance() {
     const attendance = indexAttendance(attendanceData.rows);
     const { dayKindByDay, nominalWorkdays } = getScheduleCalendar(year, monthIndex, schedule.days);
     const { nominalShift, shortenedNominalShift } = getNominalShifts();
-    const employees = new Map(state.employeesByLine.ALL.map(employee => [Number(employee.id), employee]));
-    const rows = [];
-
+    const directory = new Map(state.employeesByLine.ALL.map(employee => [Number(employee.id), employee]));
+    const employees = [];
     for (const row of schedule.rows) {
       if (isSupportEmployee(row.employeeId)) continue;
-      const department = employees.get(Number(row.employeeId))?.departmentName || "";
-      const employeeVacations = vacations[row.employeeId] || [];
-      for (const [index, day] of schedule.days.entries()) {
-        const date = attendanceDate(monthKey, day);
-        const mark = attendance.get(date + ":" + row.employeeId);
-        if (mark?.include_in_export === false) continue;
+      const id = Number(row.employeeId);
+      const employeeVacations = vacations[id] || [];
+      const cells = schedule.days.map((day, index) => {
+        const mark = attendance.get(attendanceDate(monthKey, day) + ":" + id);
+        if (mark?.include_in_export === false) return "-";
+        if (employeeVacations.some(period => day >= period.startDay && day < period.endDayExclusive)) return "ОТП";
+        if (ABSENCE_LABELS[mark?.absence]) return ABSENCE_LABELS[mark.absence].short;
 
         const dayKind = dayKindByDay[day];
-        const vacation = employeeVacations.some(period => day >= period.startDay && day < period.endDayExclusive);
-        const absence = ABSENCE_LABELS[mark?.absence];
         const nominal = nominalWorkdays.has(day) ? (dayKind === "preholiday" ? shortenedNominalShift : nominalShift) : null;
-        const saved = row.shiftsByDay[index];
-        const shift = vacation || absence ? null : saved || nominal;
-        const status = vacation ? "Отпуск" : absence?.label ||
-          (shift ? (shift === shortenedNominalShift ? "Сокращённый день" : "Смена") :
-            dayKind === "holiday" ? "Праздник" : "Выходной");
-        const minutes = shift ? computeDurationMinutes(shift.startLocal, shift.endLocal) : 0;
-        const hours = (minutes / 60).toLocaleString("ru-RU", { maximumFractionDigits: 4 });
-        rows.push([date, row.employeeName, department, status, shift?.startLocal, shift?.endLocal, hours]);
-      }
+        const shift = row.shiftsByDay[index] || nominal;
+        if (!shift) return dayKind === "holiday" ? "П" : "В";
+        const minutes = computeDurationMinutes(shift.startLocal, shift.endLocal);
+        if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 1440) {
+          throw new Error("Проверьте часы смены: " + row.employeeName + ", " + attendanceDate(monthKey, day));
+        }
+        return minutes;
+      });
+      employees.push({ id, name: row.employeeName, department: directory.get(id)?.departmentName || "", cells });
     }
 
-    const csv = new Blob([encodeAttendanceCsv(rows)], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(csv);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "Табель-" + monthKey + ".csv";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const weekends = schedule.days.filter(day => ["holiday", "weekend"].includes(dayKindByDay[day]));
+    const report = { month: monthKey, employees, weekends };
+    const revision = attendanceRevision;
+    const verifiedAttendance = [...attendance.values()];
+    const verifiedVacations = JSON.stringify(vacations);
+    await reviewAttendance(report, async () => {
+      if (!canManageAllVacations() || !scheduleReady() || attendanceRevision !== revision) {
+        throw new Error("График изменился. Закройте проверку и откройте табель снова.");
+      }
+      const [freshAttendance, freshVacations] = await Promise.all([
+        apiClient.call("attendance.list", { month: monthKey }),
+        vacationsService.getVacationsForMonth(monthKey, { force: true }),
+      ]);
+      if (!scheduleReady() || attendanceRevision !== revision ||
+          JSON.stringify(freshAttendance.rows) !== JSON.stringify(verifiedAttendance) ||
+          JSON.stringify(freshVacations) !== verifiedVacations) {
+        throw new Error("Данные изменились. Закройте проверку и откройте табель снова.");
+      }
+      const pdf = await apiClient.call("attendance.export", report);
+      if (!(pdf instanceof Blob)) throw new Error("Сервер не вернул PDF");
+      downloadAttendancePdf(pdf, monthKey);
+    });
   } catch (error) {
-    alert("Не удалось выгрузить табель. " + (error?.message || ""));
+    alert("Не удалось открыть табель. " + (error?.message || ""));
   }
+}
+
+function downloadAttendancePdf(pdf, monthKey) {
+  const url = URL.createObjectURL(pdf);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "Табель-" + monthKey + ".pdf";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function weekdayName(year, monthIndex, day) {
@@ -5140,6 +5179,7 @@ th1.appendChild(th1Label);
           }
           const rect = td.getBoundingClientRect();
           const offset = Math.max(0, Math.min(len - 1, Math.floor((ev.clientX - rect.left) * len / rect.width)));
+          if (state.quickMode.enabled && state.quickMode.absence) return;
           openVacationPopover(
             {
               line,
@@ -5276,9 +5316,19 @@ th1.appendChild(th1Label);
       const clickDay = dayNumber;
       const clickDayIndex = dayIndex;
       td.addEventListener("click", () => {
-        if (absence && !state.quickMode.enabled && !state.swap) {
-          openAttendancePopover(row.employeeId, row.employeeName, clickDay, td);
-          return;
+        if (!state.swap) {
+          if (state.quickMode.enabled && state.quickMode.absence) {
+            if (showNominalSchedule) setQuickAbsence(row.employeeId, clickDay, state.quickMode.absence);
+            return;
+          }
+          if (absence && state.quickMode.enabled && state.quickMode.deleteMode && canManageAllVacations()) {
+            setQuickAbsence(row.employeeId, clickDay, null);
+            return;
+          }
+          if (absence && !state.quickMode.enabled) {
+            openAttendancePopover(row.employeeId, row.employeeName, clickDay, td);
+            return;
+          }
         }
         handleShiftCellClick({
           line,
@@ -5606,11 +5656,35 @@ function addDayOptions({ employeeId, employeeName, day }, anchorEl, { vacation =
   });
 }
 
+const attendanceWrites = new Set();
+let attendanceRevision = 0;
+
 async function saveDayAttendance(monthKey, payload) {
-  const { row } = await apiClient.call("attendance.save", payload);
-  if (state.attendance?.monthKey === monthKey) {
-    state.attendance.rows.set(row.date + ":" + row.employee_id, row);
-    renderScheduleCurrentLine();
+  const key = payload.date + ":" + payload.employee_id;
+  if (attendanceWrites.has(key)) throw new Error("Отметка уже сохраняется");
+  attendanceWrites.add(key);
+  try {
+    const { row } = await apiClient.call("attendance.save", payload);
+    attendanceRevision++;
+    if (state.attendance?.monthKey === monthKey) {
+      state.attendance.rows.set(key, row);
+      renderScheduleCurrentLine();
+    }
+  } finally {
+    attendanceWrites.delete(key);
+  }
+}
+
+async function setQuickAbsence(employeeId, day, absence) {
+  const monthKey = getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex);
+  if (!canManageAllVacations() || state.attendance?.monthKey !== monthKey) return;
+  const date = attendanceDate(monthKey, day);
+  const previous = state.attendance.rows.get(date + ":" + employeeId)?.absence ?? null;
+  if (previous === absence || attendanceWrites.has(date + ":" + employeeId)) return;
+  try {
+    await saveDayAttendance(monthKey, { employee_id: employeeId, date, absence });
+  } catch (error) {
+    alert(error.message || "Не удалось сохранить отметку");
   }
 }
 
@@ -5670,6 +5744,7 @@ function openAttendancePopover(employeeId, employeeName, day, anchorEl, { absenc
         <div class="shift-popover-note" role="status"></div>
       </div>
       <div class="shift-popover-footer">
+        <button class="btn danger hidden" type="submit" id="attendance-remove">Снять отметку</button>
         <button class="btn" type="button" id="attendance-close">Закрыть</button>
         <button class="btn primary" type="submit">Сохранить</button>
       </div>
@@ -5680,20 +5755,23 @@ function openAttendancePopover(employeeId, employeeName, day, anchorEl, { absenc
   const form = shiftPopoverEl.querySelector("form");
   const absenceSelect = form.querySelector("#attendance-absence");
   const include = form.querySelector("#attendance-include");
-  const save = form.querySelector('[type="submit"]');
+  const save = form.querySelector('button.primary');
+  const remove = form.querySelector("#attendance-remove");
   const status = form.querySelector('[role="status"]');
   absenceSelect.value = absence ?? record?.absence ?? "";
   absenceSelect.disabled = !canEdit;
   include.checked = record?.include_in_export !== false;
   include.disabled = !canEdit;
   save.classList.toggle("hidden", !canEdit);
+  remove.classList.toggle("hidden", !canEdit || !record?.absence);
   if (!loaded) status.textContent = "Табель пока не загрузился. Обновите страницу.";
 
   form.querySelector("#attendance-close").addEventListener("click", closeShiftPopover);
   form.addEventListener("submit", async event => {
     event.preventDefault();
     if (!canEdit || save.disabled) return;
-    save.disabled = true;
+    const removing = event.submitter === remove;
+    save.disabled = remove.disabled = true;
     absenceSelect.disabled = true;
     include.disabled = true;
     status.textContent = "";
@@ -5701,14 +5779,14 @@ function openAttendancePopover(employeeId, employeeName, day, anchorEl, { absenc
       await saveDayAttendance(monthKey, {
         employee_id: employeeId,
         date,
-        absence: absenceSelect.value || null,
-        include_in_export: include.checked,
+        absence: removing ? null : absenceSelect.value || null,
+        ...(include.checked !== (record?.include_in_export !== false) ? { include_in_export: include.checked } : {}),
       });
       if (form.isConnected) closeShiftPopover();
     } catch (error) {
       status.textContent = error?.message || "Не удалось сохранить отметку";
     } finally {
-      save.disabled = false;
+      save.disabled = remove.disabled = false;
       absenceSelect.disabled = false;
       include.disabled = false;
     }

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { openDatabase } from './database.mjs';
 import { createMailer, createMango, createPyrus } from './integrations.mjs';
 import { createPortal } from './portal.mjs';
+import { renderAttendancePdf } from './attendance-report.mjs';
 import { createScheduleEvents } from './schedule-events.mjs';
 
 const env = process.env;
@@ -79,6 +80,15 @@ async function serve(req, res) {
       return send(res, error.status || 400, apiError('INVALID_BODY', 'Некорректный JSON или слишком большой запрос'));
     }
     const { status, body: result } = await portal.act({ body, headers: req.headers });
+    if (body.action === 'attendance.export' && status === 200) {
+      const pdf = await renderAttendancePdf(result.data);
+      res.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="attendance-' + result.data.month + '.pdf"',
+        'Cache-Control': 'no-store',
+      });
+      return res.end(pdf);
+    }
     return send(res, status, result);
   }
 

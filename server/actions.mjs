@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import portalConfig from '../config.json' with { type: 'json' };
 import { isShiftTemplateAvailable } from '../js/services/shiftTemplateScope.js';
 import { findSession } from './sessions.mjs';
+import { validateAttendanceReport } from './attendance-report.mjs';
 import { durationFromShift } from './routing.mjs';
 
 function listLunches(lunches, now) {
@@ -476,6 +477,13 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       return ok({ rows: attendance.byPrefix(month + '-') });
     }
 
+    if (action === 'attendance.export') {
+      if (!(await canManageAllVacations(session))) {
+        return fail(403, 'FORBIDDEN', 'Скачивать табель может только сотрудник с ролью 1331872');
+      }
+      return ok(validateAttendanceReport(p));
+    }
+
     if (action === 'attendance.save') {
       if (!(await canManageAllVacations(session))) {
         return fail(403, 'FORBIDDEN', 'Табель может менять только сотрудник с ролью 1331872');
@@ -486,7 +494,9 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       if (!Number.isSafeInteger(employeeId) || employeeId <= 0 ||
           !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(timestamp.getTime()) ||
           timestamp.toISOString().slice(0, 10) !== date ||
-          ![undefined, null, 'day_off', 'sick'].includes(p.absence) || typeof p.include_in_export !== 'boolean') {
+          ![undefined, null, 'day_off', 'sick'].includes(p.absence) ||
+          (p.include_in_export !== undefined && typeof p.include_in_export !== 'boolean') ||
+          (p.absence === undefined && p.include_in_export === undefined)) {
         return fail(400, 'BAD_REQUEST', 'Проверьте сотрудника, дату и отметки табеля');
       }
 
@@ -516,8 +526,10 @@ export async function handleAction({ request, store, telephony, lunches, schedul
         return fail(403, 'FORBIDDEN', 'Отметки табеля пока недоступны для ТП');
       }
 
-      const absence = p.absence === undefined ? attendance.get(date + ':' + employeeId)?.absence ?? null : p.absence;
-      const row = { employee_id: employeeId, date, absence, include_in_export: p.include_in_export };
+      const previous = attendance.get(date + ':' + employeeId);
+      const absence = p.absence === undefined ? previous?.absence ?? null : p.absence;
+      const include = p.include_in_export ?? previous?.include_in_export ?? true;
+      const row = { employee_id: employeeId, date, absence, include_in_export: include };
       return ok({ row }, null, { attendanceUpdate: row });
     }
 

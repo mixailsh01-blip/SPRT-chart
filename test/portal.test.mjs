@@ -528,6 +528,20 @@ test('только роль 1331872 меняет ежедневные отмет
   assert.equal((await save(restored)).status, 200);
   const restarted = createPortal(dependencies);
   assert.deepEqual((await restarted.act(request('attendance.list', { month: '2026-11' }, adminToken))).body.data.rows, [restored]);
+  const attendanceExport = (report, token = editorToken) => portal.act(request('attendance.export', report, token));
+  const report = { month: '2026-11', employees: [{
+    id: member.id, name: 'Иван Петров', department: '', cells: ['ОГ', 540, ...Array(28).fill('В')],
+  }], weekends: [7, 8] };
+  assert.equal((await attendanceExport(report, adminToken)).status, 403);
+  assert.equal((await attendanceExport(report)).status, 200);
+  assert.equal((await portal.act(request('attendance.export', report))).status, 401);
+  assert.equal((await attendanceExport({ ...report, month: '2026-12' })).status, 400);
+
+  assert.equal((await save({ employee_id: member.id, date: mark.date, include_in_export: false })).status, 200);
+  assert.equal((await save({ employee_id: member.id, date: mark.date, absence: null })).status, 200);
+  assert.deepEqual((await list('2026-11')).body.data.rows, [{ ...mark, absence: null }]);
+
   editorGranted = false;
   assert.equal((await save(mark)).status, 403);
+  assert.equal((await attendanceExport(report)).status, 403);
 });

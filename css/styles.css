@@ -4700,3 +4700,57 @@ body.swap-mode .app-toast {
   color: inherit;
   background: var(--sticky-bg);
 }
+
+.attendance-review {
+  box-sizing: border-box;
+  width: min(680px, calc(100% - 32px));
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--sticky-bg);
+  color: var(--text);
+}
+
+.attendance-review::backdrop {
+  background: rgb(0 0 0 / 58%);
+}
+
+.attendance-review h2 {
+  font-size: 20px;
+  margin: 0 0 10px;
+}
+
+.attendance-review-summary {
+  margin: 0 0 14px;
+  color: var(--text-muted);
+}
+
+.attendance-review-table {
+  max-height: min(48vh, 400px);
+  overflow: auto;
+}
+
+.attendance-review table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.attendance-review th,
+.attendance-review td {
+  border-bottom: 1px solid var(--border);
+  padding: 7px;
+  text-align: right;
+}
+
+.attendance-review th:first-child,
+.attendance-review td:first-child {
+  text-align: left;
+}
+
+.attendance-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}

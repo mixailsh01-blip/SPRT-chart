@@ -26,6 +26,9 @@ export const API_ACTIONS = Object.freeze({
   LUNCH_START: "lunch.start",
   LUNCH_END: "lunch.end",
   LUNCH_LIST: "lunch.list",
+  ATTENDANCE_LIST: "attendance.list",
+  ATTENDANCE_SAVE: "attendance.save",
+  ATTENDANCE_EXPORT: "attendance.export",
 });
 
 const PUBLIC_ACTIONS = new Set([API_ACTIONS.AUTH_START, API_ACTIONS.AUTH_VERIFY, API_ACTIONS.AUTH_LINK]);
@@ -83,6 +86,9 @@ export function createApiClient({ baseUrl, timeoutMs = 30000, getToken, onUnauth
       throw error;
     }
 
+    if (action === API_ACTIONS.ATTENDANCE_EXPORT && contentType.includes("application/pdf")) {
+      return res.blob();
+    }
     if (!body) throw new Error("Некорректный ответ сервера (ожидался JSON)");
     // Формат ответа: { ok: true, data: ... }. Для совместимости принимаем и «голый» JSON.
     return Object.prototype.hasOwnProperty.call(body, "data") && Object.prototype.hasOwnProperty.call(body, "ok")
