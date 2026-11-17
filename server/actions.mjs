@@ -467,7 +467,7 @@ export async function handleAction({ request, store, telephony, lunches, schedul
       if (!Number.isSafeInteger(employeeId) || employeeId <= 0 ||
           !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(timestamp.getTime()) ||
           timestamp.toISOString().slice(0, 10) !== date ||
-          ![null, 'day_off', 'sick'].includes(p.absence) || typeof p.include_in_export !== 'boolean') {
+          ![undefined, null, 'day_off', 'sick'].includes(p.absence) || typeof p.include_in_export !== 'boolean') {
         return fail(400, 'BAD_REQUEST', 'Проверьте сотрудника, дату и отметки табеля');
       }
 
@@ -497,7 +497,8 @@ export async function handleAction({ request, store, telephony, lunches, schedul
         return fail(403, 'FORBIDDEN', 'Отметки табеля пока недоступны для ТП');
       }
 
-      const row = { employee_id: employeeId, date, absence: p.absence, include_in_export: p.include_in_export };
+      const absence = p.absence === undefined ? attendance.get(date + ':' + employeeId)?.absence ?? null : p.absence;
+      const row = { employee_id: employeeId, date, absence, include_in_export: p.include_in_export };
       return ok({ row }, null, { attendanceUpdate: row });
     }
 

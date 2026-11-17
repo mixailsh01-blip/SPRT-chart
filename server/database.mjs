@@ -19,6 +19,7 @@ export function openDatabase(filename) {
     return [name, {
       all: () => all.all().map(row => JSON.parse(row.data)),
       byPrefix: prefix => byPrefix.all(prefix, prefix + '\uffff').map(row => JSON.parse(row.data)),
+      get: id => JSON.parse(get.get(String(id))?.data ?? "null"),
       has: id => Boolean(get.get(String(id))),
       put: (id, row) => upsert.run(String(id), JSON.stringify(row)),
       clear: () => clear.run(),

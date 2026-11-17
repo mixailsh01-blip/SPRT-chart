@@ -509,6 +509,10 @@ test('только роль 1331872 меняет ежедневные отмет
 
   assert.deepEqual((await list('2026-11')).body.data.rows, [mark]);
   assert.deepEqual((await list('2026-12')).body.data.rows, []);
+  const { absence: _, ...flagOnly } = mark;
+  assert.equal((await save({ ...flagOnly, include_in_export: true }, adminToken)).status, 403);
+  assert.equal((await save({ ...flagOnly, include_in_export: true })).status, 200);
+  assert.deepEqual((await list('2026-11')).body.data.rows, [{ ...mark, include_in_export: true }]);
   const restored = { ...mark, absence: 'day_off', include_in_export: true };
   assert.equal((await save(restored)).status, 200);
   const restarted = createPortal(dependencies);

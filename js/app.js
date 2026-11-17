@@ -3140,7 +3140,7 @@ function vacationSubmitLine(line, employeeId) {
   return canEditRow(line, employeeId) ? line : null;
 }
 
-async function createVacationForRange(line, row, firstDay, lastDay, submitLine, { confirmed = false } = {}) {
+async function createVacationForRange(line, row, firstDay, lastDay, submitLine) {
   const { year, monthIndex } = state.monthMeta;
   const sched = state.scheduleByLine[line];
   const days = sched?.days || [];
@@ -3155,20 +3155,20 @@ async function createVacationForRange(line, row, firstDay, lastDay, submitLine, 
       `В период отпуска у сотрудника есть смены: ${shiftDays.join(", ")} число.\n` +
         "Сначала удалите их (и сохраните), затем поставьте отпуск."
     );
-    return false;
+    return;
   }
   const overlapping = (state.vacationsByEmployee[row.employeeId] || []).find(
     (v) => v.startDay <= lastDay && (v.endDayExclusive || v.startDay + 1) > firstDay
   );
   if (overlapping) {
     alert(`Период пересекается с отпуском ${overlapping.startLabel} – ${overlapping.endLabel}.`);
-    return false;
+    return;
   }
 
   const count = lastDay - firstDay + 1;
   const fromLabel = formatDateRu(year, monthIndex, firstDay);
   const toLabel = formatDateRu(year, monthIndex, lastDay);
-  if (!confirmed && !confirm(`Добавить отпуск в Pyrus?\n\n${row.employeeName}\nс ${fromLabel} по ${toLabel} (${count} дн.)`)) return false;
+  if (!confirm(`Добавить отпуск в Pyrus?\n\n${row.employeeName}\nс ${fromLabel} по ${toLabel} (${count} дн.)`)) return;
 
   // Показываем отпуск сразу, до ответа сервера; при ошибке — откатываем
   const entry = {
@@ -3204,11 +3204,10 @@ async function createVacationForRange(line, row, firstDay, lastDay, submitLine, 
     if (idx >= 0) cur.splice(idx, 1);
     renderScheduleCurrentLine();
     alert(`Не удалось добавить отпуск: ${err.message || err}`);
-    return false;
+    return;
   }
   // Сверка с Pyrus — в фоне, не блокирует уже показанный результат
   refreshVacationsForCurrentMonth().catch(() => {});
-  return true;
 }
 
 async function confirmAndDeleteVacation(row, vac) {
@@ -5278,7 +5277,7 @@ th1.appendChild(th1Label);
       const clickDayIndex = dayIndex;
       td.addEventListener("click", () => {
         if (absence && !state.quickMode.enabled && !state.swap) {
-          openAttendancePopover(row.employeeId, row.employeeName, clickDay, td, { line });
+          openAttendancePopover(row.employeeId, row.employeeName, clickDay, td);
           return;
         }
         handleShiftCellClick({
@@ -5552,43 +5551,67 @@ function openBirthdayPopover(context, anchorEl) {
 
 
 
-function newPopoverButton(label, action) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "btn";
-  button.textContent = label;
-  button.addEventListener("click", action);
-  return button;
+function addDayOptions({ employeeId, employeeName, day }, anchorEl, { vacation = false } = {}) {
+  if (isSupportEmployee(employeeId)) return;
+  const body = shiftPopoverEl.querySelector(".shift-popover-body");
+  if (!vacation && canManageAllVacations()) {
+    const section = document.createElement("div");
+    section.className = "shift-popover-section";
+    const title = document.createElement("div");
+    title.className = "shift-popover-section-title";
+    title.textContent = "Статус дня";
+    const actions = document.createElement("div");
+    actions.className = "shift-template-list";
+    for (const [absence, { label }] of Object.entries(ABSENCE_LABELS)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn";
+      button.textContent = label;
+      button.addEventListener("click", () => openAttendancePopover(employeeId, employeeName, day, anchorEl, { absence }));
+      actions.append(button);
+    }
+    section.append(title, actions);
+    body.append(section);
+  }
+
+  const monthKey = getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex);
+  const date = attendanceDate(monthKey, day);
+  const loaded = state.attendance?.monthKey === monthKey;
+  const record = loaded ? state.attendance.rows.get(date + ":" + employeeId) : null;
+  const label = document.createElement("label");
+  label.className = "telephony-toggle";
+  const include = document.createElement("input");
+  include.type = "checkbox";
+  include.checked = record?.include_in_export !== false;
+  include.disabled = !loaded || !canManageAllVacations();
+  label.append(include, "Включать в выгрузку бухгалтеру");
+  const status = document.createElement("div");
+  status.className = "shift-popover-note";
+  status.setAttribute("role", "status");
+  body.append(label, status);
+  if (!loaded) status.textContent = "Табель пока не загрузился.";
+
+  include.addEventListener("change", async () => {
+    const checked = include.checked;
+    include.disabled = true;
+    status.textContent = "";
+    try {
+      await saveDayAttendance(monthKey, { employee_id: employeeId, date, include_in_export: checked });
+    } catch (error) {
+      include.checked = !checked;
+      status.textContent = error?.message || "Не удалось сохранить отметку";
+    } finally {
+      include.disabled = !canManageAllVacations();
+    }
+  });
 }
 
-function addDayOptions({ line, employeeId, employeeName, day }, anchorEl, { vacation = false } = {}) {
-  const support = isSupportEmployee(employeeId);
-  const buttons = [];
-  if (!vacation && vacationSubmitLine(line, employeeId)) {
-    buttons.push(newPopoverButton("Отпуск", () => openVacationCreatePopover(line, employeeId, day, anchorEl)));
+async function saveDayAttendance(monthKey, payload) {
+  const { row } = await apiClient.call("attendance.save", payload);
+  if (state.attendance?.monthKey === monthKey) {
+    state.attendance.rows.set(row.date + ":" + row.employee_id, row);
+    renderScheduleCurrentLine();
   }
-  if (!support) {
-    if (!vacation && canManageAllVacations()) {
-      for (const [absence, { label }] of Object.entries(ABSENCE_LABELS)) {
-        buttons.push(newPopoverButton(label, () =>
-          openAttendancePopover(employeeId, employeeName, day, anchorEl, { line, absence })));
-      }
-    }
-    buttons.push(newPopoverButton("Выгрузка", () =>
-      openAttendancePopover(employeeId, employeeName, day, anchorEl, { line, vacation })));
-  }
-  if (!buttons.length) return;
-
-  const section = document.createElement("div");
-  section.className = "shift-popover-section";
-  const title = document.createElement("div");
-  title.className = "shift-popover-section-title";
-  title.textContent = "Статус дня";
-  const actions = document.createElement("div");
-  actions.className = "shift-template-list";
-  actions.append(...buttons);
-  section.append(title, actions);
-  shiftPopoverEl.querySelector(".shift-popover-body").append(section);
 }
 
 function prepareDayPopover() {
@@ -5611,80 +5634,7 @@ function showDayPopover(anchorEl) {
   shiftPopoverEl.classList.add("open");
 }
 
-function openVacationCreatePopover(line, employeeId, day, anchorEl) {
-  const submitLine = vacationSubmitLine(line, employeeId);
-  const schedule = state.scheduleByLine[line];
-  const row = schedule?.rows.find(item => Number(item.employeeId) === Number(employeeId));
-  if (!submitLine || !row) return;
-  if (state.ui.isScheduleCached) {
-    alert("Дождитесь загрузки свежего графика из Pyrus.");
-    return;
-  }
-
-  const { year, monthIndex } = state.monthMeta;
-  const monthKey = getMonthKey(year, monthIndex);
-  const initial = attendanceDate(monthKey, day);
-  const first = attendanceDate(monthKey, 1);
-  const last = attendanceDate(monthKey, schedule.days.at(-1));
-
-  prepareDayPopover();
-  shiftPopoverEl.innerHTML = `
-    <div class="shift-popover-header">
-      <div>
-        <div class="shift-popover-title">Новый отпуск</div>
-        <div class="shift-popover-subtitle"></div>
-      </div>
-      <button class="shift-popover-close" type="button" aria-label="Закрыть">✕</button>
-    </div>
-    <form id="vacation-create-form">
-      <div class="shift-popover-body">
-        <div class="field-row">
-          <label for="vacation-create-start">Начало</label>
-          <input type="date" id="vacation-create-start" required>
-        </div>
-        <div class="field-row">
-          <label for="vacation-create-end">Последний день</label>
-          <input type="date" id="vacation-create-end" required>
-        </div>
-      </div>
-      <div class="shift-popover-footer">
-        <button class="btn" type="button" id="vacation-create-cancel">Отмена</button>
-        <button class="btn primary" type="submit">Поставить отпуск</button>
-      </div>
-    </form>`;
-
-  shiftPopoverEl.querySelector(".shift-popover-subtitle").textContent = row.employeeName;
-  const form = shiftPopoverEl.querySelector("form");
-  const start = form.querySelector("#vacation-create-start");
-  const end = form.querySelector("#vacation-create-end");
-  const submit = form.querySelector('[type="submit"]');
-  start.min = first;
-  start.max = last;
-  end.min = initial;
-  end.max = last;
-  start.value = end.value = initial;
-  start.addEventListener("change", () => {
-    end.min = start.value;
-    if (end.value < start.value) end.value = start.value;
-  });
-  form.querySelector("#vacation-create-cancel").addEventListener("click", closeShiftPopover);
-  form.addEventListener("submit", async event => {
-    event.preventDefault();
-    if (submit.disabled || !form.reportValidity()) return;
-    if (getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex) !== monthKey) return;
-    submit.disabled = true;
-    try {
-      const saved = await createVacationForRange(line, row, Number(start.value.slice(-2)),
-        Number(end.value.slice(-2)), submitLine, { confirmed: true });
-      if (saved && form.isConnected) closeShiftPopover();
-    } finally {
-      submit.disabled = false;
-    }
-  });
-  showDayPopover(anchorEl);
-}
-
-function openAttendancePopover(employeeId, employeeName, day, anchorEl, { line, vacation = false, absence } = {}) {
+function openAttendancePopover(employeeId, employeeName, day, anchorEl, { absence } = {}) {
   if (isSupportEmployee(employeeId)) return;
   const { year, monthIndex } = state.monthMeta;
   const monthKey = getMonthKey(year, monthIndex);
@@ -5711,7 +5661,6 @@ function openAttendancePopover(employeeId, employeeName, day, anchorEl, { line, 
             <option value="">По графику</option>
             <option value="day_off">Отгул</option>
             <option value="sick">Больничный</option>
-            <option value="vacation">Отпуск</option>
           </select>
         </div>
         <label class="telephony-toggle">
@@ -5733,18 +5682,13 @@ function openAttendancePopover(employeeId, employeeName, day, anchorEl, { line, 
   const include = form.querySelector("#attendance-include");
   const save = form.querySelector('[type="submit"]');
   const status = form.querySelector('[role="status"]');
-  if (!vacation) absenceSelect.querySelector('[value="vacation"]').remove();
-  absenceSelect.value = vacation ? "vacation" : (absence ?? record?.absence ?? "");
-  absenceSelect.disabled = !canEdit || vacation;
+  absenceSelect.value = absence ?? record?.absence ?? "";
+  absenceSelect.disabled = !canEdit;
   include.checked = record?.include_in_export !== false;
   include.disabled = !canEdit;
   save.classList.toggle("hidden", !canEdit);
   if (!loaded) status.textContent = "Табель пока не загрузился. Обновите страницу.";
 
-  if (!vacation && line && vacationSubmitLine(line, employeeId)) {
-    form.querySelector(".shift-popover-footer").prepend(
-      newPopoverButton("Отпуск", () => openVacationCreatePopover(line, employeeId, day, anchorEl)));
-  }
   form.querySelector("#attendance-close").addEventListener("click", closeShiftPopover);
   form.addEventListener("submit", async event => {
     event.preventDefault();
@@ -5754,22 +5698,18 @@ function openAttendancePopover(employeeId, employeeName, day, anchorEl, { line, 
     include.disabled = true;
     status.textContent = "";
     try {
-      const { row } = await apiClient.call("attendance.save", {
+      await saveDayAttendance(monthKey, {
         employee_id: employeeId,
         date,
-        absence: vacation ? record?.absence || null : absenceSelect.value || null,
+        absence: absenceSelect.value || null,
         include_in_export: include.checked,
       });
-      if (state.attendance?.monthKey === monthKey) {
-        state.attendance.rows.set(key, row);
-        renderScheduleCurrentLine();
-      }
       if (form.isConnected) closeShiftPopover();
     } catch (error) {
       status.textContent = error?.message || "Не удалось сохранить отметку";
     } finally {
       save.disabled = false;
-      absenceSelect.disabled = vacation;
+      absenceSelect.disabled = false;
       include.disabled = false;
     }
   });
