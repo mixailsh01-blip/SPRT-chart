@@ -2,9 +2,10 @@
 // Главный модуль SPA «График смен» (SPRT-chart)
 // Чистый vanilla JS.
 
+import { recordDiagnostic, downloadDiagnostics } from "./utils/diagnostics.js";
 import { config, getConfigValue } from "./config.js?v=10";
-import { createApiClient } from "./api/apiClient.js?v=6";
-import { listenForScheduleChanges } from "./api/scheduleEvents.js";
+import { createApiClient } from "./api/apiClient.js?v=7";
+import { listenForScheduleChanges } from "./api/scheduleEvents.js?v=2";
 import { createPyrusClient, unwrapPyrusData } from "./api/pyrusClient.js";
 import { createMembersService } from "./services/membersService.js";
 import { createCatalogsService } from "./services/catalogsService.js";
@@ -12,7 +13,7 @@ import { createVacationsService } from "./services/vacationsService.js?v=8";
 import { isShiftTemplateAvailable } from "./services/shiftTemplateScope.js";
 import { createScheduleService } from "./services/scheduleService.js?v=8";
 import { createProdCalendarService } from "./services/prodCalendarService.js?v=3";
-import { createSettingsPanel } from "./settings.js?v=6";
+import { createSettingsPanel } from "./settings.js?v=7";
 import { createVacationReport } from "./vacationReport.js?v=7";
 import { ABSENCE_LABELS, attendanceDate, indexAttendance, reviewAttendance } from "./services/attendance.js?v=5";
 import { invalidateKey as invalidateCacheKey } from "./cache/requestCache.js";
@@ -156,6 +157,16 @@ const settingsPanel = createSettingsPanel({
     renderScheduleCurrentLine();
   },
   showToast: (msg) => showAppToast(msg),
+  downloadLog: () => downloadDiagnostics({
+    month: getMonthKey(state.monthMeta.year, state.monthMeta.monthIndex),
+    line: state.ui.currentLine,
+    cached: state.ui.isScheduleCached,
+    loading: Boolean(activeScheduleLoad),
+    loadError: state.ui.scheduleLoadError ? { code: state.ui.scheduleLoadError.code, status: state.ui.scheduleLoadError.status } : null,
+    pendingShiftLines: linesWithPendingChanges(),
+    saving: Boolean(autoSave.running),
+    pendingAttendanceWrites: attendanceWrites.size,
+  }),
 });
 
 const vacationReport = createVacationReport({
@@ -2709,7 +2720,7 @@ function updateSaveButtonState() {
   } else if (isCached) {
     // Показан кэш: сохранять нельзя, пока не придёт свежий график из Pyrus
     const loadError = state.ui.scheduleLoadError;
-    btnSavePyrusEl.textContent = loadError ? "Нет связи с Pyrus — повторить" : "Данные загружаются…";
+    btnSavePyrusEl.textContent = loadError ? "Ошибка загрузки — повторить" : "Данные загружаются…";
     btnSavePyrusEl.classList.toggle("is-error", Boolean(loadError));
     btnSavePyrusEl.disabled = !loadError;
     btnSavePyrusEl.title = loadError
@@ -4127,6 +4138,10 @@ async function refreshLiveSchedule() {
   }
 }
 
+window.addEventListener("online", () => {
+  if (state.auth.sessionToken) queueLiveScheduleRefresh();
+});
+
 function startLiveSchedule() {
   if (stopScheduleEvents || !state.auth.sessionToken || mainScreenEl?.classList.contains("hidden")) return;
   stopScheduleEvents = listenForScheduleChanges({
@@ -4401,6 +4416,7 @@ async function loadScheduleForCurrentMonth({ showCached = false, isRetry = false
     await reloadScheduleForCurrentMonthInner();
     if (isCurrentMonth()) {
       if (!state.ui.isScheduleCached) {
+        recordDiagnostic("schedule.loaded", { month: monthKey, cached: false });
         state.ui.scheduleLoadError = null;
         scheduleRetry.attempt = 0;
         // Правки, сделанные пока шла загрузка, — отправить
@@ -4419,6 +4435,7 @@ async function loadScheduleForCurrentMonth({ showCached = false, isRetry = false
       }
     }
   } catch (err) {
+    recordDiagnostic("schedule.error", { month: monthKey, code: err.code, status: err.status, cached: state.ui.isScheduleCached });
     console.error("Не удалось загрузить график", err);
     if (isCurrentMonth()) {
       state.ui.scheduleLoadError = err;

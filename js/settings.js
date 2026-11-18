@@ -55,6 +55,7 @@ export function createSettingsPanel({
   getContext, // () => ({ isAdmin, ownId, adminRoleId, editorRoleId })
   onTemplatesChanged, // () => Promise<void>
   showToast = () => {},
+  downloadLog = () => {},
 }) {
   let backdrop = null;
   let modal = null;
@@ -442,7 +443,16 @@ export function createSettingsPanel({
   async function showTab(tab) {
     activeTab = tab;
     modal.querySelectorAll(".settings-tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-    if (tab === "access") await renderAccessTab();
+    if (tab === "diagnostics") {
+      renderSeq++;
+      const wrap = el("div", "settings-section");
+      wrap.append(el("p", "settings-muted", "Скачайте журнал запросов и ошибок подключения для разбора проблемы."));
+      const button = el("button", "btn primary", "📥 Скачать лог");
+      button.type = "button";
+      button.addEventListener("click", downloadLog);
+      wrap.append(button);
+      body.replaceChildren(wrap);
+    } else if (tab === "access") await renderAccessTab();
     else await renderShiftsTab();
   }
 
@@ -496,6 +506,12 @@ export function createSettingsPanel({
       tabs.appendChild(tabAccess);
     }
 
+    const diagnosticsTab = el("button", "settings-tab", "Диагностика");
+    diagnosticsTab.type = "button";
+    diagnosticsTab.dataset.tab = "diagnostics";
+    diagnosticsTab.addEventListener("click", () => showTab("diagnostics"));
+    tabs.append(diagnosticsTab);
+
     body = el("div", "settings-body");
     modal.append(head, tabs, body);
     backdrop.appendChild(modal);
@@ -507,7 +523,7 @@ export function createSettingsPanel({
       if (e.key === "Escape") close();
     };
     document.addEventListener("keydown", keyHandler);
-    showTab(activeTab === "access" && ctx.isAdmin ? "access" : "shifts");
+    showTab(activeTab === "diagnostics" ? "diagnostics" : activeTab === "access" && ctx.isAdmin ? "access" : "shifts");
   }
 
   return { open, close };

@@ -5,6 +5,7 @@
 //           Authorization: Bearer <sessionToken> (кроме auth.start / auth.verify)
 // Описание действий: docs/API_CONTRACT.md
 
+import { recordDiagnostic } from "../utils/diagnostics.js";
 import { createLogger } from "../utils/logger.js";
 
 export const API_ACTIONS = Object.freeze({
@@ -37,7 +38,7 @@ export function createApiClient({ baseUrl, timeoutMs = 30000, getToken, onUnauth
   if (!baseUrl) throw new Error("apiClient: не задан api.baseUrl в config.json");
   const log = logger || createLogger("api");
 
-  async function call(action, payload = {}) {
+  async function request(action, payload = {}) {
     if (!action) throw new Error("apiClient.call: не указан action");
     if (!Object.values(API_ACTIONS).includes(action)) {
       log.warn(`apiClient.call: неизвестный action "${action}"`);
@@ -59,41 +60,74 @@ export function createApiClient({ baseUrl, timeoutMs = 30000, getToken, onUnauth
         signal: controller.signal,
       });
     } catch (err) {
-      if (err?.name === "AbortError") throw new Error("Сервер не ответил вовремя");
-      throw new Error("Нет связи с сервером");
+      clearTimeout(timer);
+      throw Object.assign(new Error(err?.name === "AbortError" ? "Сервер не ответил вовремя" : "Нет связи с сервером"), {
+        code: err?.name === "AbortError" ? "TIMEOUT" : "NETWORK_ERROR",
+      });
+    }
+
+    try {
+      const contentType = res.headers.get("content-type") || "";
+      const body = contentType.includes("application/json") ? await res.json().catch(error => {
+        if (controller.signal.aborted) throw Object.assign(new Error("Сервер не ответил вовремя"), { code: "TIMEOUT" });
+        if (error instanceof SyntaxError) return null;
+        throw Object.assign(new Error("Соединение прервано при загрузке ответа"), { code: "NETWORK_ERROR" });
+      }) : null;
+
+      if (res.status === 401 && !PUBLIC_ACTIONS.has(action)) {
+        if (typeof onUnauthorized === "function") onUnauthorized();
+      }
+
+      if (!res.ok || (body && body.ok === false)) {
+        const errorPayload = body?.error ?? {};
+        const message =
+          (typeof errorPayload === "string" && errorPayload) ||
+          errorPayload.message ||
+          body?.message ||
+          `Ошибка HTTP ${res.status}`;
+        const error = new Error(message);
+        error.status = res.status;
+        error.code = errorPayload.code || body?.code || null;
+        error.retryAfterSec = Number(errorPayload.retryAfterSec || res.headers.get("retry-after")) || 0;
+        throw error;
+      }
+
+      if (action === API_ACTIONS.ATTENDANCE_EXPORT && contentType.includes("application/pdf")) {
+        return await res.blob();
+      }
+      if (!body) throw Object.assign(new Error("Некорректный ответ сервера (ожидался JSON)"), { code: "INVALID_RESPONSE" });
+      // Формат ответа: { ok: true, data: ... }. Для совместимости принимаем и «голый» JSON.
+      return Object.prototype.hasOwnProperty.call(body, "data") && Object.prototype.hasOwnProperty.call(body, "ok")
+        ? body.data
+        : body;
     } finally {
       clearTimeout(timer);
     }
+  }
 
-    const contentType = res.headers.get("content-type") || "";
-    const body = contentType.includes("application/json") ? await res.json().catch(() => null) : null;
-
-    if (res.status === 401 && !PUBLIC_ACTIONS.has(action)) {
-      if (typeof onUnauthorized === "function") onUnauthorized();
+  async function call(action, payload = {}) {
+    const readOnly = action === "pyrus.request" && (!payload.method || payload.method === "GET") ||
+      ["auth.me", "attendance.list", "lunch.status", "lunch.list"].includes(action);
+    const path = action === "pyrus.request" && /^\/v4\/[a-z0-9/]+$/i.test(payload.path || "") ? payload.path : undefined;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const start = Date.now();
+      recordDiagnostic("request.start", { action, path, attempt, online: navigator.onLine });
+      try {
+        const result = await request(action, payload);
+        recordDiagnostic("request.success", { action, path, attempt, durationMs: Date.now() - start });
+        return result;
+      } catch (error) {
+        recordDiagnostic("request.error", {
+          action, path, attempt, durationMs: Date.now() - start, status: error.status, code: error.code,
+          online: navigator.onLine,
+        });
+        const transient = ["NETWORK_ERROR", "TIMEOUT"].includes(error.code) ||
+          [408, 502, 503, 504].includes(error.status);
+        if (!readOnly || !transient || attempt === 2 || !navigator.onLine) throw error;
+        recordDiagnostic("request.retry", { action, path, attempt });
+        await new Promise(resolve => setTimeout(resolve, 700));
+      }
     }
-
-    if (!res.ok || (body && body.ok === false)) {
-      const errorPayload = body?.error ?? {};
-      const message =
-        (typeof errorPayload === "string" && errorPayload) ||
-        errorPayload.message ||
-        body?.message ||
-        `Ошибка HTTP ${res.status}`;
-      const error = new Error(message);
-      error.status = res.status;
-      error.code = errorPayload.code || body?.code || null;
-      error.retryAfterSec = Number(errorPayload.retryAfterSec || res.headers.get("retry-after")) || 0;
-      throw error;
-    }
-
-    if (action === API_ACTIONS.ATTENDANCE_EXPORT && contentType.includes("application/pdf")) {
-      return res.blob();
-    }
-    if (!body) throw new Error("Некорректный ответ сервера (ожидался JSON)");
-    // Формат ответа: { ok: true, data: ... }. Для совместимости принимаем и «голый» JSON.
-    return Object.prototype.hasOwnProperty.call(body, "data") && Object.prototype.hasOwnProperty.call(body, "ok")
-      ? body.data
-      : body;
   }
 
   return { call };
